@@ -1,0 +1,327 @@
+{% extends "base.html" %} {% block title %}Dashboard{% endblock %} {% block
+content %} {% set months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio',
+'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'] %}
+<div class="container mt-4">
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>
+      Dashboard
+      <span class="text-primary fw-normal fs-3"
+        >{{ months[current_month - 1] }} de {{ current_year }}</span
+      >
+    </h1>
+    <div>
+      <a
+        href="{{ url_for('main.dashboard', year=current_year if current_month > 1 else current_year - 1, month=current_month-1 if current_month > 1 else 12) }}"
+        class="btn btn-secondary"
+        >&lt; Mês Anterior</a
+      >
+      <a
+        href="{{ url_for('main.dashboard', year=current_year if current_month < 12 else current_year + 1, month=current_month+1 if current_month < 12 else 1) }}"
+        class="btn btn-secondary"
+        >Próximo Mês &gt;</a
+      >
+    </div>
+  </div>
+
+  {% if not parametro %}
+  <div class="alert alert-warning" role="alert">
+    <strong>Bem-vindo!</strong> Parece que é sua primeira vez aqui.
+    <a href="{{ url_for('main.cadastro') }}" class="alert-link"
+      >Comece cadastrando os parâmetros</a
+    >
+    do seu veículo e suas metas.
+  </div>
+  {% else %}
+  <!-- CARDS DE RESUMO -->
+  <div class="row">
+    <!-- Card Principal: Meta de Performance para Hoje -->
+    <div class="col-lg-8 mb-4">
+      <div class="card text-center border-primary shadow-sm h-100">
+        <div class="card-header bg-primary text-white">
+          <h5 class="mb-0">Meta de Performance para Hoje</h5>
+        </div>
+        <div class="card-body d-flex flex-column justify-content-center">
+          {% if meta_hoje_atingida %}
+          <h2 class="card-title display-4 text-success">Meta Atingida!</h2>
+          <p class="card-text text-muted mb-0">
+            Você superou a meta de hoje em R$ {{
+            "%.2f"|format(meta_restante_hoje * -1) }}
+          </p>
+          {% else %}
+          <h2 class="card-title display-4">
+            R$ {{ "%.2f"|format(meta_restante_hoje) }}
+          </h2>
+          <p class="card-text text-muted mb-0">
+            É o que falta para você atingir a meta ajustada de hoje (R$ {{
+            "%.2f"|format(meta_ajustada_para_hoje) }})
+          </p>
+          {% endif %}
+          <hr class="my-3" />
+          <p class="card-text mb-0">
+            Sua meta base diária é de
+            <strong>R$ {{ "%.2f"|format(meta_diaria_base) }}</strong>
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Card Lateral: Informações do Veículo -->
+    <div class="col-lg-4 mb-4">
+      <div class="card h-100">
+        <div class="card-header">
+          <h5 class="mb-0">Veículo</h5>
+        </div>
+        <div class="card-body d-flex flex-column justify-content-between">
+          <div>
+            <h5 class="card-title">
+              {{ parametro.modelo_carro or 'Não informado' }}
+            </h5>
+            <p class="card-text mb-1">
+              <strong>Placa:</strong> {{ parametro.placa_carro or 'Não
+              informada' }}
+            </p>
+          </div>
+          <a
+            href="{{ url_for('main.cadastro') }}"
+            class="btn btn-sm btn-outline-secondary w-100 mt-3"
+            >Editar Parâmetros</a
+          >
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <!-- Faturamento Bruto (Real) -->
+    <div class="col-md-6 mb-4">
+      <div class="card h-100">
+        <div class="card-body text-center">
+          <h5 class="card-title">Faturamento Bruto (Mês)</h5>
+          <p class="card-text display-6 fw-bold">
+            R$ {{ "%.2f"|format(faturamento_bruto_real_mes) }}
+          </p>
+          <small class="text-muted">Total real faturado no mês.</small>
+        </div>
+      </div>
+    </div>
+
+    <!-- Saldo Atual (Real) -->
+    <div class="col-md-6 mb-4">
+      <div class="card h-100">
+        <div class="card-body text-center">
+          <h5 class="card-title">Saldo Atual (Real)</h5>
+          <p
+            class="card-text display-6 fw-bold {% if saldo_atual_real >= 0 %}text-success{% else %}text-danger{% endif %}"
+          >
+            R$ {{ "%.2f"|format(saldo_atual_real) }}
+          </p>
+          <small class="text-muted">(Faturamento Real - Todos os Custos)</small>
+        </div>
+      </div>
+    </div>
+
+    <!-- Meta do Mês (Bruta) -->
+    <div class="col-md-6 mb-4">
+      <div class="card h-100">
+        <div class="card-body text-center">
+          <h5 class="card-title">Meta do Mês (Bruta)</h5>
+          <p class="card-text display-6 fw-bold text-primary">
+            R$ {{ "%.2f"|format(meta_mensal_bruta) }}
+          </p>
+          <small class="text-muted">Seu objetivo de faturamento bruto.</small>
+        </div>
+      </div>
+    </div>
+
+    <!-- Projeção Lucro Operacional -->
+    <div class="col-md-6 mb-4">
+      <div class="card h-100">
+        <div class="card-body text-center">
+          <h5 class="card-title">Projeção Lucro</h5>
+          <p class="card-text display-6 fw-bold text-info">
+            R$ {{ "%.2f"|format(projecao_lucro_operacional) }}
+          </p>
+          <small class="text-muted"
+            >(Meta Bruta Mensal - Custos Variáveis)</small
+          >
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- EXTRATO E CUSTOS FIXOS -->
+  <div class="row mt-2">
+    <!-- Extrato Detalhado do Mês -->
+    <div class="col-lg-8 mb-4">
+      <div class="card">
+        <div class="card-header">
+          <strong>Extrato Detalhado do Mês</strong>
+        </div>
+        <div class="card-body p-0" style="max-height: 400px; overflow-y: auto">
+          <ul class="list-group list-group-flush">
+            {% for dia in extrato_diario %}
+            <li class="list-group-item">
+              <div class="row align-items-center">
+                <div class="col-md-3">
+                  <strong>{{ dia.data.strftime('%d/%m') }}</strong>
+                  <span class="text-muted"
+                    >({{ dia.data.strftime('%a') }})</span
+                  >
+                </div>
+                <div class="col-md-4 text-center">
+                  <span
+                    class="fs-6 fw-bold {% if dia.faturamento_realizado >= dia.meta_esperada %}text-success{% else %}text-danger{% endif %}"
+                  >
+                    Realizado: R$ {{ "%.2f"|format(dia.faturamento_realizado) }}
+                  </span>
+                  <small class="d-block text-muted"
+                    >Meta: R$ {{ "%.2f"|format(dia.meta_esperada) }}</small
+                  >
+                </div>
+                <div class="col-md-5 text-end">
+                  <span class="badge bg-{{ dia.cor_km }} fs-6">
+                    Valor/KM: R$ {{ "%.2f"|format(dia.valor_km) }}
+                  </span>
+                </div>
+              </div>
+            </li>
+            {% else %}
+            <li class="list-group-item text-center text-muted">
+              Nenhum lançamento encontrado para este mês.
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Custos Fixos -->
+    <div class="col-lg-4 mb-4">
+      <div class="card border-danger">
+        <div class="card-header bg-danger text-white">
+          <h5 class="mb-0">Custos Fixos (R$ {{ "%.2f"|format(custos_fixos_total) }})</h5>
+        </div>
+        <div class="card-body p-0" style="max-height: 400px; overflow-y: auto">
+          <ul class="list-group list-group-flush">
+            {% for registro in registros_custos %} {% if
+            registro.custo.is_active %}
+            <li
+              class="list-group-item d-flex justify-content-between align-items-center"
+            >
+              <div>
+                <span class="fw-bold">{{ registro.custo.nome }}</span>
+                <small class="d-block text-muted"
+                  >Vence: {{ registro.data_vencimento.strftime('%d/%m')
+                  }}</small
+                >
+              </div>
+              <div class="text-end">
+                <span
+                  class="badge {% if registro.pago %}bg-success{% else %}bg-danger{% endif %} rounded-pill mb-1"
+                >
+                  R$ {{ "%.2f"|format(registro.valor) }}
+                </span>
+
+                <!-- BOTÃO DE PAGAMENTO -->
+                <form
+                  method="POST"
+                  action="{{ url_for('main.toggle_pago', registro_id=registro.id) }}"
+                  style="display: inline"
+                >
+                  {% if registro.pago %}
+                  <button
+                    type="submit"
+                    class="btn btn-sm btn-outline-warning"
+                    title="Marcar como Pendente"
+                  >
+                    Desfazer
+                  </button>
+                  {% else %}
+                  <button
+                    type="submit"
+                    class="btn btn-sm btn-success"
+                    title="Marcar como Pago"
+                  >
+                    Pagar
+                  </button>
+                  {% endif %}
+                </form>
+              </div>
+            </li>
+            {% endif %} {% else %}
+            <li class="list-group-item text-center text-muted">
+              Nenhum custo fixo para este mês.
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Receitas Recorrentes -->
+    <div class="col-lg-4 mb-4">
+      <div class="card border-success">
+        <div class="card-header bg-success text-white">
+          <h5 class="mb-0">Receitas Recorrentes</h5>
+        </div>
+        <div class="card-body p-0" style="max-height: 400px; overflow-y: auto">
+          <ul class="list-group list-group-flush">
+            {% for registro in registros_receitas %} {% if
+            registro.receita.is_active %}
+            <li
+              class="list-group-item d-flex justify-content-between align-items-center"
+            >
+              <div>
+                <span class="fw-bold">{{ registro.receita.nome }}</span>
+                <small class="d-block text-muted"
+                  >Recebe: {{ registro.data_recebimento_esperada.strftime('%d/%m')
+                  }}</small
+                >
+              </div>
+              <div class="text-end">
+                <span
+                  class="badge {% if registro.recebido %}bg-success{% else %}bg-secondary{% endif %} rounded-pill mb-1"
+                >
+                  R$ {{ "%.2f"|format(registro.valor) }}
+                </span>
+
+                <!-- BOTÃO DE RECEBIMENTO -->
+                <form
+                  method="POST"
+                  action="{{ url_for('main.toggle_recebido', registro_id=registro.id) }}"
+                  style="display: inline"
+                >
+                  {% if registro.recebido %}
+                  <button
+                    type="submit"
+                    class="btn btn-sm btn-outline-warning"
+                    title="Marcar como Pendente"
+                  >
+                    Desfazer
+                  </button>
+                  {% else %}
+                  <button
+                    type="submit"
+                    class="btn btn-sm btn-success"
+                    title="Marcar como Recebido"
+                  >
+                    Receber
+                  </button>
+                  {% endif %}
+                </form>
+              </div>
+            </li>
+            {% endif %} {% else %}
+            <li class="list-group-item text-center text-muted">
+              Nenhuma receita recorrente para este mês.
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,49 @@
+{% extends "base.html" %} {% from "_formhelpers.html" import render_field %} {%
+block title %}Editar Definição de Custo{% endblock %} {% block content %}
+<div class="container mt-5">
+  <div class="row justify-content-center">
+    <div class="col-lg-8">
+      <div class="card">
+        <div class="card-header">
+          <h3>Editar Definição de Custo</h3>
+        </div>
+        <div class="card-body">
+          <form
+            method="POST"
+            action="{{ url_for('main.edit_definicao_custo', custo_id=custo_id) }}"
+            novalidate
+          >
+            {{ form.hidden_tag() }}
+            <div class="row g-3">
+              <div class="col-md-6">
+                {{ render_field(form.nome, class="form-control") }}
+              </div>
+              <div class="col-md-3">
+                {{ render_field(form.valor, class="form-control") }}
+              </div>
+              <div class="col-md-3">
+                {{ render_field(form.dia_vencimento, class="form-control") }}
+              </div>
+              <div class="col-md-12">
+                {{ render_field(form.observacao, class="form-control", rows="3")
+                }}
+              </div>
+              <div class="col-md-4">
+                {{ render_field(form.alerta_dias, class="form-control") }}
+              </div>
+            </div>
+            <div class="mt-4">
+              {{ form.submit(class="btn btn-primary w-100") }}
+              <a
+                href="{{ url_for('main.cadastro') }}"
+                class="btn btn-secondary w-100 mt-2"
+                >Cancelar</a
+              >
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
