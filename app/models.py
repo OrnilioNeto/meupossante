@@ -82,6 +82,7 @@ class Faturamento(db.Model):
     valor = db.Column(db.Float, nullable=False)
     tipo = db.Column(db.String(50), nullable=False)
     fonte = db.Column(db.String(100))
+    origem = db.Column(db.String(20), nullable=False, default='desempenho')
 
 class CustoVariavel(db.Model):
     __tablename__ = 'custo_variavel'

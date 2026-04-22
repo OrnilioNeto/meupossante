@@ -41,11 +41,23 @@ content %} {% set months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio',
           <h5 class="mb-0">Meta de Performance para Hoje</h5>
         </div>
         <div class="card-body d-flex flex-column justify-content-center">
+          {% if meta_semanal > 0 %}
+          <p class="mb-2 text-muted">
+            Semana (seg-dom): realizado R$ {{ "%.2f"|format(faturamento_semana_realizado) }}
+            de R$ {{ "%.2f"|format(meta_semanal) }}
+          </p>
+          {% endif %}
           {% if meta_hoje_atingida %}
-          <h2 class="card-title display-4 text-success">Meta Atingida!</h2>
+          <h2 class="card-title display-4 text-success">
+            {% if meta_semana_atingida %}Meta da Semana Atingida!{% else %}Meta Atingida!{% endif %}
+          </h2>
           <p class="card-text text-muted mb-0">
+            {% if meta_semana_atingida %}
+            Você já concluiu sua meta semanal. Os próximos dias da semana ficam com meta zerada.
+            {% else %}
             Você superou a meta de hoje em R$ {{
             "%.2f"|format(meta_restante_hoje * -1) }}
+            {% endif %}
           </p>
           {% else %}
           <h2 class="card-title display-4">
@@ -61,6 +73,11 @@ content %} {% set months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio',
             Sua meta base diária é de
             <strong>R$ {{ "%.2f"|format(meta_diaria_base) }}</strong>
           </p>
+          {% if meta_semanal > 0 and not meta_semana_atingida %}
+          <p class="card-text mb-0 text-muted">
+            Faturamento aguardado da semana: <strong>R$ {{ "%.2f"|format(faturamento_aguardado_semana) }}</strong>
+          </p>
+          {% endif %}
         </div>
       </div>
     </div>

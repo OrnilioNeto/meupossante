@@ -138,7 +138,8 @@ def index():
                 else: fonte_final = 'Dinheiro'
                 db.session.add(Faturamento(
                     valor=float(valor_str), tipo=tipos[i], fonte=fonte_final,
-                    data=data_obj, user_id=current_user.id, lancamento_id=lancamento_diario.id
+                    data=data_obj, user_id=current_user.id, lancamento_id=lancamento_diario.id,
+                    origem='desempenho'
                 ))
             flash(f'Dados de desempenho salvos com sucesso!', 'success')
 
@@ -159,7 +160,8 @@ def index():
                     else: fonte_final = 'Dinheiro'
                     db.session.add(Faturamento(
                         valor=float(valor_str), tipo=tipos_fat[i], fonte=fonte_final,
-                        data=data_obj, user_id=current_user.id, lancamento_id=lancamento_diario.id
+                        data=data_obj, user_id=current_user.id, lancamento_id=lancamento_diario.id,
+                        origem='avulso'
                     ))
 
             # CORREÇÃO: Implementa a lógica para salvar custos variáveis
@@ -518,24 +520,115 @@ def dashboard():
         # Se a meta é BRUTA, subtraímos todos os custos do mês (fixos, variáveis e combustível).
         projecao_lucro_operacional = meta_mensal_configurada - custos_variaveis_mes - abastecimentos_mes - custos_fixos_total_mes
 
-    # --- 5. CÁLCULO DE METAS DO DIA (Sem alteração) ---
+    # --- 5. CÁLCULO DE METAS DO DIA/SEMANA (SEG A DOM) ---
     param_hoje = get_parametros_for_date(current_user, today) or parametro
-    param_ontem = get_parametros_for_date(current_user, today - timedelta(days=1)) or param_hoje
-    meta_diaria_base = (param_hoje.meta_faturamento / param_hoje.dias_trabalho_semana) if param_hoje and param_hoje.periodicidade_meta == 'semanal' and (param_hoje.dias_trabalho_semana or 0) > 0 else (param_hoje.meta_faturamento if param_hoje else 0)
-    meta_diaria_ontem = (param_ontem.meta_faturamento / param_ontem.dias_trabalho_semana) if param_ontem and param_ontem.periodicidade_meta == 'semanal' and (param_ontem.dias_trabalho_semana or 0) > 0 else (param_ontem.meta_faturamento if param_ontem else 0)
-    faturamento_ontem = db.session.query(func.sum(Faturamento.valor)).filter(Faturamento.user_id == current_user.id, Faturamento.data == (today - timedelta(days=1))).scalar() or 0
-    faturamento_hoje = db.session.query(func.sum(Faturamento.valor)).filter(Faturamento.user_id == current_user.id, Faturamento.data == today).scalar() or 0
-    saldo_dia_anterior = faturamento_ontem - meta_diaria_ontem
-    meta_ajustada_para_hoje = meta_diaria_base - saldo_dia_anterior
-    meta_restante_hoje = meta_ajustada_para_hoje - faturamento_hoje
+
+    data_inicio_calculos = start_date_month - timedelta(days=start_date_month.weekday())
+    faturamento_por_data_rows = db.session.query(
+        Faturamento.data,
+        func.sum(Faturamento.valor)
+    ).filter(
+        Faturamento.user_id == current_user.id,
+        Faturamento.data.between(data_inicio_calculos, end_date_month)
+    ).group_by(Faturamento.data).all()
+    faturamento_por_data = {row[0]: float(row[1] or 0.0) for row in faturamento_por_data_rows}
+
+    def _calcular_meta_esperada_dia(data_alvo, parametro_dia):
+        if not parametro_dia:
+            return 0.0
+
+        meta_faturamento = float(parametro_dia.meta_faturamento or 0.0)
+        dias_trabalho = int(parametro_dia.dias_trabalho_semana or 0)
+
+        if parametro_dia.periodicidade_meta != 'semanal' or dias_trabalho <= 0:
+            return meta_faturamento
+
+        dias_trabalho = max(1, min(dias_trabalho, 7))
+        meta_semanal = meta_faturamento
+        meta_diaria = meta_semanal / dias_trabalho
+
+        semana_inicio = data_alvo - timedelta(days=data_alvo.weekday())
+        dias_ate_ontem = (data_alvo - semana_inicio).days
+
+        meta_planejada_ate_ontem = 0.0
+        faturamento_ate_ontem = 0.0
+
+        for offset in range(dias_ate_ontem):
+            dia = semana_inicio + timedelta(days=offset)
+            if dia.weekday() < dias_trabalho:
+                meta_planejada_ate_ontem += meta_diaria
+            faturamento_ate_ontem += float(faturamento_por_data.get(dia, 0.0))
+
+        if data_alvo.weekday() >= dias_trabalho:
+            return 0.0
+
+        restante_semana_antes_do_dia = max(meta_semanal - faturamento_ate_ontem, 0.0)
+        if restante_semana_antes_do_dia <= 0:
+            return 0.0
+
+        saldo_acumulado = max(meta_planejada_ate_ontem - faturamento_ate_ontem, 0.0)
+        meta_ajustada_dia = meta_diaria + saldo_acumulado
+
+        return min(meta_ajustada_dia, restante_semana_antes_do_dia)
+
+    meta_diaria_base = 0.0
+    meta_ajustada_para_hoje = 0.0
+    meta_restante_hoje = 0.0
+    meta_semanal = 0.0
+    faturamento_semana_realizado = 0.0
+    faturamento_aguardado_semana = 0.0
+    meta_semana_atingida = False
+
+    if param_hoje and param_hoje.periodicidade_meta == 'semanal' and (param_hoje.dias_trabalho_semana or 0) > 0:
+        dias_trabalho_semana = max(1, min(int(param_hoje.dias_trabalho_semana or 0), 7))
+        meta_semanal = float(param_hoje.meta_faturamento or 0.0)
+        meta_diaria_base = (meta_semanal / dias_trabalho_semana) if dias_trabalho_semana > 0 else 0.0
+
+        semana_atual_inicio = today - timedelta(days=today.weekday())
+
+        for offset in range((today - semana_atual_inicio).days + 1):
+            dia = semana_atual_inicio + timedelta(days=offset)
+            faturamento_semana_realizado += float(faturamento_por_data.get(dia, 0.0))
+
+        meta_ajustada_para_hoje = _calcular_meta_esperada_dia(today, param_hoje)
+        faturamento_hoje = float(faturamento_por_data.get(today, 0.0))
+        meta_restante_hoje = max(meta_ajustada_para_hoje - faturamento_hoje, 0.0)
+
+        faturamento_aguardado_semana = max(meta_semanal - faturamento_semana_realizado, 0.0)
+        meta_semana_atingida = faturamento_aguardado_semana <= 0
+    else:
+        param_ontem = get_parametros_for_date(current_user, today - timedelta(days=1)) or param_hoje
+        meta_diaria_base = (param_hoje.meta_faturamento if param_hoje else 0) or 0.0
+        meta_diaria_ontem = (param_ontem.meta_faturamento if param_ontem else 0) or 0.0
+        faturamento_ontem = db.session.query(func.sum(Faturamento.valor)).filter(
+            Faturamento.user_id == current_user.id,
+            Faturamento.data == (today - timedelta(days=1))
+        ).scalar() or 0.0
+        faturamento_hoje = db.session.query(func.sum(Faturamento.valor)).filter(
+            Faturamento.user_id == current_user.id,
+            Faturamento.data == today
+        ).scalar() or 0.0
+
+        saldo_dia_anterior = float(faturamento_ontem) - float(meta_diaria_ontem)
+        meta_ajustada_para_hoje = max(float(meta_diaria_base) - saldo_dia_anterior, 0.0)
+        meta_restante_hoje = max(meta_ajustada_para_hoje - float(faturamento_hoje), 0.0)
+
+        meta_semanal = 0.0
+        faturamento_semana_realizado = 0.0
+        faturamento_aguardado_semana = 0.0
+        meta_semana_atingida = (meta_restante_hoje <= 0)
 
     # --- 6. EXTRATO DIÁRIO (Lógica de cores revisada) ---
     extrato_diario = current_user.lancamentos_diarios.filter(LancamentoDiario.data.between(start_date_month, end_date_month)).order_by(LancamentoDiario.data.desc()).all()
 
     for dia in extrato_diario:
         param_dia = get_parametros_for_date(current_user, dia.data)
-        meta_do_dia = (param_dia.meta_faturamento / param_dia.dias_trabalho_semana) if param_dia and param_dia.periodicidade_meta == 'semanal' and (param_dia.dias_trabalho_semana or 0) > 0 else (param_dia.meta_faturamento if param_dia else 0)
-        valor_km = (dia.faturamento_total / dia.km_rodado) if dia.km_rodado > 0 else 0
+        meta_do_dia = _calcular_meta_esperada_dia(dia.data, param_dia)
+        faturamento_desempenho_total = db.session.query(func.sum(Faturamento.valor)).filter(
+            Faturamento.lancamento_id == dia.id,
+            Faturamento.origem == 'desempenho'
+        ).scalar() or 0.0
+        valor_km = (faturamento_desempenho_total / dia.km_rodado) if dia.km_rodado > 0 else 0
         
         cor_km = 'danger' 
         if param_dia and param_dia.valor_km_meta and valor_km >= param_dia.valor_km_meta:
@@ -544,6 +637,7 @@ def dashboard():
             cor_km = 'warning'
         
         dia.faturamento_realizado = dia.faturamento_total
+        dia.faturamento_desempenho_total = faturamento_desempenho_total
         dia.meta_esperada = meta_do_dia
         dia.valor_km = valor_km
         dia.cor_km = cor_km
@@ -553,6 +647,8 @@ def dashboard():
         'dashboard.html', title='Dashboard Financeiro', parametro=parametro,
         meta_restante_hoje=meta_restante_hoje, meta_hoje_atingida=(meta_restante_hoje <= 0),
         meta_ajustada_para_hoje=meta_ajustada_para_hoje, meta_diaria_base=meta_diaria_base,
+        meta_semanal=meta_semanal, faturamento_semana_realizado=faturamento_semana_realizado,
+        faturamento_aguardado_semana=faturamento_aguardado_semana, meta_semana_atingida=meta_semana_atingida,
         faturamento_bruto_real_mes=faturamento_bruto_real_mes, saldo_atual_real=saldo_atual_real,
         meta_mensal_bruta=meta_mensal_configurada, projecao_lucro_operacional=projecao_lucro_operacional,
         extrato_diario=extrato_diario, registros_custos=registros_custos_mes,
