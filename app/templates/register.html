@@ -10,8 +10,25 @@
   <div class="login-container">
     <h1 class="text-center h3 mb-4">Crie sua Conta</h1>
 
-    <form method="POST" action="{{ url_for('main.register') }}" novalidate>
+    {% if invite %}
+    <div class="alert alert-info small text-start mb-3">
+      Convite válido para <strong>{{ invite.email or 'qualquer e-mail autorizado' }}</strong>
+      com acesso <strong>{{ invite.role }}</strong> até
+      <strong>{{ invite.expires_at.strftime('%d/%m/%Y %H:%M') }}</strong>.
+    </div>
+    {% else %}
+    <div class="alert alert-warning small text-start mb-3">
+      O cadastro está disponível apenas por convite válido.
+    </div>
+    {% endif %}
+
+    {% if invite %}
+    <form method="POST" action="{{ url_for('main.register', token=token) if token else url_for('main.register') }}" novalidate>
       {{ form.hidden_tag() }}
+
+      <p class="small text-muted mb-3">
+        O convite define o nível de acesso desta conta. Se o e-mail foi fixado, ele precisa ser o mesmo usado no formulário.
+      </p>
 
       <div class="form-floating mb-3">
         {{ form.email(class="form-control", placeholder="E-mail") }} {{
@@ -47,6 +64,7 @@
         {{ form.submit(class="btn btn-primary mt-3") }}
       </div>
     </form>
+    {% endif %}
 
     <div class="text-center mt-4">
       <a href="{{ url_for('main.login') }}" class="forgot-password-link"

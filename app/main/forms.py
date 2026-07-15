@@ -9,6 +9,18 @@ class LoginForm(FlaskForm):
     remember_me = BooleanField('Lembrar-me')
     submit = SubmitField('Entrar')
 
+
+class BootstrapAdminForm(FlaskForm):
+    email = StringField('E-mail do admin', validators=[DataRequired(), Email()])
+    password = PasswordField('Senha', validators=[DataRequired()])
+    password2 = PasswordField('Repita a Senha', validators=[DataRequired(), EqualTo('password')])
+    submit = SubmitField('Criar admin inicial')
+
+    def validate_email(self, email):
+        user = User.query.filter_by(email=email.data.strip().lower()).first()
+        if user is not None:
+            raise ValidationError('Este e-mail já está sendo utilizado.')
+
 class RegistrationForm(FlaskForm):
     email = StringField('E-mail', validators=[DataRequired(), Email()])
     password = PasswordField('Senha', validators=[DataRequired()])
@@ -20,6 +32,17 @@ class RegistrationForm(FlaskForm):
         user = User.query.filter_by(email=email.data).first()
         if user is not None:
             raise ValidationError('Este e-mail já está sendo utilizado.')
+
+
+class InviteForm(FlaskForm):
+    email = StringField('E-mail convidado', validators=[Optional(), Email()])
+    role = SelectField(
+        'Nível de acesso',
+        choices=[('user', 'Usuário'), ('operator', 'Operador'), ('admin', 'Administrador')],
+        validators=[DataRequired()]
+    )
+    expires_days = IntegerField('Validade do convite (dias)', default=7, validators=[DataRequired(), NumberRange(min=1, max=365)])
+    submit = SubmitField('Gerar convite')
 
 class CustoForm(FlaskForm):
     nome = StringField('Nome do Custo', validators=[DataRequired()])

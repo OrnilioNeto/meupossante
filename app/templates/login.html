@@ -8,7 +8,15 @@ block styles %}
 layout customizado #} {% block main_content %}
 <div class="login-page">
   <div class="login-container">
-    <h1 class="text-center h3 mb-4">Meu Possante</h1>
+    <h1 class="text-center h3 mb-4">
+      {% if bootstrap_mode %}Criar Admin Inicial{% else %}Meu Possante{% endif %}
+    </h1>
+
+    {% if bootstrap_mode %}
+    <div class="alert alert-warning small text-start mb-3">
+      Ainda não existe nenhum usuário no sistema. Crie o primeiro administrador para liberar o acesso.
+    </div>
+    {% endif %}
 
     {% with messages = get_flashed_messages(with_categories=true) %} {% if
     messages %} {% for category, message in messages %}
@@ -43,6 +51,19 @@ layout customizado #} {% block main_content %}
       </div>
       {% endfor %}
 
+      {% if bootstrap_mode %}
+      <div class="form-floating mb-4">
+        {{ form.password2(class="form-control", placeholder="Repita a Senha") }} {{
+        form.password2.label(class="form-label") }}
+      </div>
+      {% for error in form.password2.errors %}
+      <div class="invalid-feedback d-block text-start ps-1 mb-2">
+        {{ error }}
+      </div>
+      {% endfor %}
+
+      <div class="d-grid mb-3">{{ form.submit(class="btn btn-primary") }}</div>
+      {% else %}
       <div class="d-flex justify-content-between align-items-center mb-4">
         <div class="form-check">
           {{ form.remember_me(class="form-check-input") }} {{
@@ -52,8 +73,10 @@ layout customizado #} {% block main_content %}
       </div>
 
       <div class="d-grid mb-3">{{ form.submit(class="btn btn-primary") }}</div>
+      {% endif %}
     </form>
 
+    {% if not bootstrap_mode %}
     <div class="divider">ou</div>
 
     <div class="d-grid">
@@ -70,6 +93,7 @@ layout customizado #} {% block main_content %}
         >Não tem uma conta? Crie agora!</a
       >
     </div>
+    {% endif %}
   </div>
 </div>
 {% endblock main_content %}

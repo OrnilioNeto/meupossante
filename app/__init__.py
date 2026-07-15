@@ -52,6 +52,11 @@ def create_app():
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
         GOOGLE_CLIENT_ID=os.getenv("GOOGLE_CLIENT_ID"),
         GOOGLE_CLIENT_SECRET=os.getenv("GOOGLE_CLIENT_SECRET"),
+        ADMIN_EMAILS=[
+            email.strip().lower()
+            for email in os.getenv("ADMIN_EMAILS", "").split(",")
+            if email.strip()
+        ],
     )
 
     # Cria a pasta 'instance' se não existir

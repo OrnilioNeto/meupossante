@@ -1,3 +1,4 @@
+from flask import current_app
 from . import db
 from datetime import datetime, date
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -13,6 +14,8 @@ class User(UserMixin, db.Model):
     name = db.Column(db.String(100), nullable=True)
     profile_pic = db.Column(db.String(200), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    role = db.Column(db.String(20), default='user', nullable=True)
+    is_active = db.Column(db.Boolean, default=True, nullable=True)
 
     parametros = db.relationship('Parametros', backref='user', lazy='dynamic', cascade="all, delete-orphan")
     custos = db.relationship('Custo', backref='user', lazy='dynamic', cascade="all, delete-orphan")
@@ -29,6 +32,33 @@ class User(UserMixin, db.Model):
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+
+    @property
+    def is_admin(self):
+        admin_emails = {
+            email.strip().lower()
+            for email in current_app.config.get('ADMIN_EMAILS', [])
+            if email and email.strip()
+        }
+        user_email = (self.email or '').strip().lower()
+        if admin_emails:
+            return (self.role or 'user') == 'admin' or user_email in admin_emails
+        return (self.role or 'user') == 'admin' or self.id == 1
+
+
+class Invitation(db.Model):
+    __tablename__ = 'invitation'
+    id = db.Column(db.Integer, primary_key=True)
+    token = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    email = db.Column(db.String(120), nullable=True, index=True)
+    role = db.Column(db.String(20), default='user', nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    used_at = db.Column(db.DateTime, nullable=True)
+    created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+
+    created_by = db.relationship('User', foreign_keys=[created_by_id])
 
 # --- APP MODELS ---
 class Parametros(db.Model):

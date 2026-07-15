@@ -6,19 +6,60 @@ from app.models import (
     User, Parametros, Custo, RegistroCusto,
     CategoriaCusto, CustoVariavel, LancamentoDiario,
     Faturamento, Abastecimento, TipoCombustivel,
-    Receita, RegistroReceita
+    Receita, RegistroReceita, Invitation
 )
 
-from .forms import LoginForm, RegistrationForm, CustoForm, RegistroCustoForm, ReceitaForm
+from .forms import LoginForm, BootstrapAdminForm, RegistrationForm, CustoForm, RegistroCustoForm, ReceitaForm, InviteForm
 from urllib.parse import urlsplit
 from datetime import datetime, timedelta, date
 from sqlalchemy import extract, func
 from calendar import monthrange
+from functools import wraps
+import secrets
 import locale
 import calendar
 
 # Configura o locale para Português do Brasil
-locale.setlocale(locale.LC_TIME, 'pt_BR.UTF-8')
+try:
+    locale.setlocale(locale.LC_TIME, 'pt_BR.UTF-8')
+except locale.Error:
+    locale.setlocale(locale.LC_TIME, 'C.UTF-8')
+
+
+def _is_admin_user(user):
+    return bool(user and user.is_authenticated and getattr(user, 'is_admin', False))
+
+
+def _get_active_invite(token):
+    if not token:
+        return None
+
+    invite = Invitation.query.filter_by(token=token, is_active=True).first()
+    if invite is None:
+        return None
+
+    if invite.expires_at < datetime.utcnow():
+        return None
+
+    return invite
+
+
+def admin_required(view_func):
+    @wraps(view_func)
+    def wrapped_view(*args, **kwargs):
+        if not _is_admin_user(current_user):
+            abort(403)
+        return view_func(*args, **kwargs)
+
+    return wrapped_view
+
+
+@bp.before_app_request
+def block_inactive_accounts():
+    if current_user.is_authenticated and not bool(getattr(current_user, 'is_active', True)):
+        logout_user()
+        flash('Sua conta foi desativada. Fale com um administrador.', 'danger')
+        return redirect(url_for('main.login'))
 
 # --- ROTAS DE AUTENTICAÇÃO ---
 
@@ -27,35 +68,84 @@ def login():
     if current_user.is_authenticated:
         return redirect(url_for('main.index'))
     
+    user_count = User.query.count()
+    if user_count == 0:
+        form = BootstrapAdminForm()
+        if form.validate_on_submit():
+            admin_email = form.email.data.strip().lower()
+            user = User(
+                email=admin_email,
+                name=admin_email.split('@')[0],
+                role='admin',
+                is_active=True,
+            )
+            user.set_password(form.password.data)
+            db.session.add(user)
+            db.session.commit()
+            login_user(user, remember=True)
+            flash('Administrador inicial criado com sucesso.', 'success')
+            return redirect(url_for('main.index'))
+
+        return render_template("login.html", form=form, bootstrap_mode=True)
+
     form = LoginForm()
     if form.validate_on_submit():
         user = User.query.filter_by(email=form.email.data).first()
-        if user is None or not user.check_password(form.password.data):
+        if user is None or not user.password_hash or not user.check_password(form.password.data):
             flash('E-mail ou senha inválidos.', 'danger')
+            return redirect(url_for('main.login'))
+
+        if not bool(getattr(user, 'is_active', True)):
+            flash('Sua conta ainda não está liberada para acesso.', 'danger')
             return redirect(url_for('main.login'))
         
         login_user(user, remember=form.remember_me.data)
         next_page = request.args.get('next')
         return redirect(next_page or url_for('main.index'))
         
-    return render_template("login.html", form=form)
+    return render_template("login.html", form=form, bootstrap_mode=False)
 
-@bp.route("/register", methods=['GET', 'POST'])
-def register():
+@bp.route("/register", defaults={'token': None}, methods=['GET', 'POST'])
+@bp.route("/register/<token>", methods=['GET', 'POST'])
+def register(token):
     if current_user.is_authenticated:
         return redirect(url_for('main.index'))
     
     form = RegistrationForm()
-    if form.validate_on_submit():
-        user = User(email=form.email.data)
-        user.set_password(form.password.data)
-        user.name = form.email.data.split('@')[0]
-        db.session.add(user)
-        db.session.commit()
-        flash('Conta criada com sucesso! Faça o login para continuar.', 'success')
-        return redirect(url_for('main.login'))
+    invite = _get_active_invite(token)
+    token_is_valid = invite is not None
 
-    return render_template('register.html', form=form)
+    if form.validate_on_submit():
+        if not token_is_valid:
+            flash('Cadastro disponível apenas com um convite válido.', 'danger')
+            return redirect(url_for('main.login'))
+
+        email_normalizado = form.email.data.strip().lower()
+        if invite.email and invite.email.strip().lower() != email_normalizado:
+            flash('Este convite foi emitido para outro e-mail.', 'danger')
+            return render_template('register.html', form=form, token=token, invite=invite)
+
+        user_exists = User.query.filter(func.lower(User.email) == email_normalizado).first()
+        if user_exists is not None:
+            flash('Este e-mail já está sendo utilizado.', 'danger')
+            return render_template('register.html', form=form, token=token, invite=invite)
+
+        user = User(email=email_normalizado)
+        user.set_password(form.password.data)
+        user.name = email_normalizado.split('@')[0]
+        user.role = invite.role or 'user'
+        user.is_active = True
+        db.session.add(user)
+
+        invite.is_active = False
+        invite.used_at = datetime.utcnow()
+
+        db.session.commit()
+        login_user(user)
+        flash('Conta criada com sucesso!', 'success')
+        return redirect(url_for('main.index'))
+
+    return render_template('register.html', form=form, token=token, invite=invite)
 
 @bp.route("/login/google")
 def login_google():
@@ -69,19 +159,38 @@ def authorize():
     user_info = oauth.google.get('https://www.googleapis.com/oauth2/v2/userinfo').json()
     
     google_id = str(user_info['id'])
-    email = user_info['email']
+    email = user_info['email'].strip().lower()
 
-    user = User.query.filter_by(email=email).first()
+    user = User.query.filter(func.lower(User.email) == email).first()
 
     if user is None:
+        invite = Invitation.query.filter(
+            func.lower(Invitation.email) == email,
+            Invitation.is_active.is_(True),
+            Invitation.expires_at >= datetime.utcnow(),
+        ).first()
+
+        if invite is None:
+            flash('Este e-mail não possui convite válido para entrar no sistema.', 'danger')
+            return redirect(url_for('main.login'))
+
         user = User(
             google_id=google_id,
             email=email,
             name=user_info.get('name'),
-            profile_pic=user_info.get('picture')
+            profile_pic=user_info.get('picture'),
+            role=invite.role or 'user',
+            is_active=True,
         )
         db.session.add(user)
+        invite.is_active = False
+        invite.used_at = datetime.utcnow()
+
     else:
+        if not bool(getattr(user, 'is_active', True)):
+            flash('Sua conta ainda não está liberada para acesso.', 'danger')
+            return redirect(url_for('main.login'))
+
         user.google_id = google_id
         user.name = user.name or user_info.get('name')
         user.profile_pic = user.profile_pic or user_info.get('picture')
@@ -96,6 +205,75 @@ def logout():
     logout_user()
     flash("Você foi desconectado.", "info")
     return redirect(url_for('main.login'))
+
+
+@bp.route('/admin/invites', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def admin_invites():
+    form = InviteForm()
+
+    if form.validate_on_submit():
+        invite = Invitation(
+            token=secrets.token_urlsafe(24),
+            email=(form.email.data or '').strip().lower() or None,
+            role=form.role.data,
+            expires_at=datetime.utcnow() + timedelta(days=form.expires_days.data or 7),
+            created_by_id=current_user.id,
+        )
+        db.session.add(invite)
+        db.session.commit()
+        flash('Convite gerado com sucesso.', 'success')
+        return redirect(url_for('main.admin_invites'))
+
+    invites = Invitation.query.order_by(Invitation.created_at.desc()).all()
+    users = User.query.order_by(User.created_at.desc()).all()
+    return render_template('admin_invites.html', form=form, invites=invites, users=users, now=datetime.utcnow())
+
+
+@bp.route('/admin/invites/<int:invite_id>/revoke', methods=['POST'])
+@login_required
+@admin_required
+def revoke_invite(invite_id):
+    invite = Invitation.query.get_or_404(invite_id)
+    invite.is_active = False
+    db.session.commit()
+    flash('Convite revogado.', 'success')
+    return redirect(url_for('main.admin_invites'))
+
+
+@bp.route('/admin/users/<int:user_id>/toggle-active', methods=['POST'])
+@login_required
+@admin_required
+def toggle_user_active(user_id):
+    user = User.query.get_or_404(user_id)
+    if user.id == current_user.id:
+        flash('Você não pode desativar sua própria conta.', 'danger')
+        return redirect(url_for('main.admin_invites'))
+
+    user.is_active = not bool(user.is_active)
+    db.session.commit()
+    flash('Status do usuário atualizado.', 'success')
+    return redirect(url_for('main.admin_invites'))
+
+
+@bp.route('/admin/users/<int:user_id>/role', methods=['POST'])
+@login_required
+@admin_required
+def update_user_role(user_id):
+    user = User.query.get_or_404(user_id)
+    if user.id == current_user.id:
+        flash('Você não pode alterar o próprio nível de acesso.', 'danger')
+        return redirect(url_for('main.admin_invites'))
+
+    new_role = (request.form.get('role') or 'user').strip().lower()
+    if new_role not in {'user', 'operator', 'admin'}:
+        abort(400)
+
+    user.role = new_role
+    db.session.commit()
+    flash('Nível de acesso atualizado.', 'success')
+    return redirect(url_for('main.admin_invites'))
 
 # --- ROTAS DA APLICAÇÃO ---
 
@@ -574,6 +752,7 @@ def dashboard():
     meta_diaria_base = 0.0
     meta_ajustada_para_hoje = 0.0
     meta_restante_hoje = 0.0
+    meta_excedente_hoje = 0.0
     meta_semanal = 0.0
     faturamento_semana_realizado = 0.0
     faturamento_aguardado_semana = 0.0
@@ -593,6 +772,7 @@ def dashboard():
         meta_ajustada_para_hoje = _calcular_meta_esperada_dia(today, param_hoje)
         faturamento_hoje = float(faturamento_por_data.get(today, 0.0))
         meta_restante_hoje = max(meta_ajustada_para_hoje - faturamento_hoje, 0.0)
+        meta_excedente_hoje = max(faturamento_hoje - meta_ajustada_para_hoje, 0.0)
 
         faturamento_aguardado_semana = max(meta_semanal - faturamento_semana_realizado, 0.0)
         meta_semana_atingida = faturamento_aguardado_semana <= 0
@@ -612,6 +792,7 @@ def dashboard():
         saldo_dia_anterior = float(faturamento_ontem) - float(meta_diaria_ontem)
         meta_ajustada_para_hoje = max(float(meta_diaria_base) - saldo_dia_anterior, 0.0)
         meta_restante_hoje = max(meta_ajustada_para_hoje - float(faturamento_hoje), 0.0)
+        meta_excedente_hoje = max(float(faturamento_hoje) - meta_ajustada_para_hoje, 0.0)
 
         meta_semanal = 0.0
         faturamento_semana_realizado = 0.0
@@ -645,7 +826,8 @@ def dashboard():
     # --- 7. RENDER TEMPLATE ---
     return render_template(
         'dashboard.html', title='Dashboard Financeiro', parametro=parametro,
-        meta_restante_hoje=meta_restante_hoje, meta_hoje_atingida=(meta_restante_hoje <= 0),
+        meta_restante_hoje=meta_restante_hoje, meta_excedente_hoje=meta_excedente_hoje,
+        meta_hoje_atingida=(meta_restante_hoje <= 0),
         meta_ajustada_para_hoje=meta_ajustada_para_hoje, meta_diaria_base=meta_diaria_base,
         meta_semanal=meta_semanal, faturamento_semana_realizado=faturamento_semana_realizado,
         faturamento_aguardado_semana=faturamento_aguardado_semana, meta_semana_atingida=meta_semana_atingida,

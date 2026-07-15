@@ -1,0 +1,169 @@
+{% extends "base.html" %} {% block title %}Convites e Acessos - Meu Possante{% endblock %}
+{% block content %}
+<div class="container py-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
+    <div>
+      <h1 class="h3 mb-1">Convites e Acessos</h1>
+      <p class="text-muted mb-0">Gerencie quem pode se cadastrar e qual nível cada conta recebe.</p>
+    </div>
+  </div>
+
+  <div class="row g-4 mb-4">
+    <div class="col-lg-5">
+      <div class="card shadow-sm h-100">
+        <div class="card-header bg-primary text-white">
+          <strong>Gerar convite</strong>
+        </div>
+        <div class="card-body">
+          <form method="POST" novalidate>
+            {{ form.hidden_tag() }}
+            <div class="mb-3">
+              {{ form.email.label(class="form-label") }}
+              {{ form.email(class="form-control", placeholder="Deixe em branco para convite genérico") }}
+              <div class="form-text">Se informar um e-mail, o convite só funciona para ele.</div>
+            </div>
+            <div class="mb-3">
+              {{ form.role.label(class="form-label") }}
+              {{ form.role(class="form-select") }}
+            </div>
+            <div class="mb-3">
+              {{ form.expires_days.label(class="form-label") }}
+              {{ form.expires_days(class="form-control", min="1", max="365") }}
+            </div>
+            <div class="d-grid">
+              {{ form.submit(class="btn btn-primary") }}
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-7">
+      <div class="card shadow-sm h-100">
+        <div class="card-header bg-dark text-white">
+          <strong>Convites ativos e recentes</strong>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-striped mb-0 align-middle">
+            <thead>
+              <tr>
+                <th>E-mail</th>
+                <th>Nível</th>
+                <th>Validade</th>
+                <th>Status</th>
+                <th>Ação</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for invite in invites %}
+              <tr>
+                <td>{{ invite.email or 'Genérico' }}</td>
+                <td>{{ invite.role }}</td>
+                <td>{{ invite.expires_at.strftime('%d/%m/%Y %H:%M') }}</td>
+                <td>
+                  {% if invite.is_active and invite.expires_at >= now %}
+                  <span class="badge bg-success">Ativo</span>
+                  {% elif invite.is_active %}
+                  <span class="badge bg-warning text-dark">Expirado</span>
+                  {% else %}
+                  <span class="badge bg-secondary">Revogado</span>
+                  {% endif %}
+                </td>
+                <td class="text-nowrap">
+                  <div class="d-flex gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      class="btn btn-outline-secondary btn-sm"
+                      data-copy-link="{{ url_for('main.register', token=invite.token, _external=True) }}"
+                    >
+                      Copiar link
+                    </button>
+                    {% if invite.is_active %}
+                    <form method="POST" action="{{ url_for('main.revoke_invite', invite_id=invite.id) }}" class="d-inline">
+                      <button type="submit" class="btn btn-outline-danger btn-sm">Revogar</button>
+                    </form>
+                    {% endif %}
+                  </div>
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="5" class="text-center text-muted py-4">Nenhum convite criado ainda.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-header bg-secondary text-white">
+      <strong>Usuários</strong>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle">
+        <thead>
+          <tr>
+            <th>E-mail</th>
+            <th>Nome</th>
+            <th>Nível</th>
+            <th>Ativo</th>
+            <th>Criado em</th>
+            <th>Ações</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for user in users %}
+          <tr>
+            <td>{{ user.email }}</td>
+            <td>{{ user.name or '-' }}</td>
+            <td>
+              <form method="POST" action="{{ url_for('main.update_user_role', user_id=user.id) }}" class="d-flex gap-2 align-items-center">
+                <select name="role" class="form-select form-select-sm" {% if user.id == current_user.id %}disabled{% endif %}>
+                  <option value="user" {% if (user.role or 'user') == 'user' %}selected{% endif %}>Usuário</option>
+                  <option value="operator" {% if user.role == 'operator' %}selected{% endif %}>Operador</option>
+                  <option value="admin" {% if user.role == 'admin' %}selected{% endif %}>Administrador</option>
+                </select>
+                <button type="submit" class="btn btn-sm btn-outline-primary" {% if user.id == current_user.id %}disabled{% endif %}>Salvar</button>
+              </form>
+            </td>
+            <td>
+              {% if user.is_active %}
+              <span class="badge bg-success">Sim</span>
+              {% else %}
+              <span class="badge bg-secondary">Não</span>
+              {% endif %}
+            </td>
+            <td>{{ user.created_at.strftime('%d/%m/%Y %H:%M') if user.created_at else '-' }}</td>
+            <td>
+              <form method="POST" action="{{ url_for('main.toggle_user_active', user_id=user.id) }}">
+                <button type="submit" class="btn btn-sm {% if user.is_active %}btn-outline-danger{% else %}btn-outline-success{% endif %}" {% if user.id == current_user.id %}disabled{% endif %}>
+                  {% if user.is_active %}Desativar{% else %}Ativar{% endif %}
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.addEventListener('click', function (event) {
+    const button = event.target.closest('[data-copy-link]');
+    if (!button) return;
+    const link = button.getAttribute('data-copy-link');
+    navigator.clipboard.writeText(link).then(function () {
+      const original = button.textContent;
+      button.textContent = 'Copiado';
+      setTimeout(function () {
+        button.textContent = original;
+      }, 1200);
+    });
+  });
+</script>
+{% endblock %}
