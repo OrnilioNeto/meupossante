@@ -298,8 +298,18 @@ def index():
             db.session.flush() 
 
         if form_type == 'desempenho':
-            km_adicional = int(request.form.get('kmRodado') or 0)
-            lancamento_diario.km_rodado += km_adicional
+            km_atual_str = (request.form.get('kmAtual') or '').strip()
+            if km_atual_str:
+                km_atual = int(float(km_atual_str.replace(',', '.')))
+                km_anterior = _ultimo_km_conhecido(current_user, data_obj, lancamento_diario.id)
+                lancamento_diario.km_atual = km_atual
+                lancamento_diario.km_rodado = (
+                    km_atual - km_anterior
+                    if km_anterior is not None and km_atual >= km_anterior
+                    else 0
+                )
+            else:
+                lancamento_diario.km_rodado = int(request.form.get('kmRodado') or 0)
             # (Sua lógica de faturamento que já funciona, permanece aqui)
             valores = request.form.getlist('faturamentoValor')
             tipos = request.form.getlist('faturamentoTipo')
@@ -394,7 +404,11 @@ def index():
     # --- Lógica para carregar a página (método GET) ---
     categorias = CategoriaCusto.query.order_by(CategoriaCusto.nome).all()
     hoje = date.today().strftime('%Y-%m-%d')
-    return render_template('index.html', parametro=parametro_hoje, categorias=categorias, hoje=hoje)
+    ultimo_km = _ultimo_km_conhecido(current_user, date.today())
+    return render_template(
+        'index.html', parametro=parametro_hoje, categorias=categorias,
+        hoje=hoje, ultimo_km=ultimo_km
+    )
 
 
 @bp.route('/custos', methods=['GET', 'POST'])
@@ -547,32 +561,19 @@ def abastecimento():
 
     tipos_combustivel = TipoCombustivel.query.order_by(TipoCombustivel.nome).all()
     hoje = date.today().strftime('%Y-%m-%d')
-    historico_crescente = current_user.abastecimentos.order_by(Abastecimento.data.asc(), Abastecimento.km_atual.asc()).all()
-    
-    for i in range(len(historico_crescente)):
-        abastecimento_atual = historico_crescente[i]
-        abastecimento_atual.media_desde_anterior = None
-        if i > 0 and abastecimento_atual.tanque_cheio:
-            km_rodados_total = 0
-            litros_consumidos_total = 0
-            for j in range(i, 0, -1):
-                abastecimento_periodo = historico_crescente[j]
-                abastecimento_anterior_periodo = historico_crescente[j-1]
-                km_rodados_total += abastecimento_periodo.km_atual - abastecimento_anterior_periodo.km_atual
-                litros_consumidos_total += abastecimento_periodo.litros
-                if historico_crescente[j-1].tanque_cheio:
-                    break
-            
-            if litros_consumidos_total > 0 and km_rodados_total > 0:
-                abastecimento_atual.media_desde_anterior = km_rodados_total / litros_consumidos_total
 
+    recalcular_medias(current_user.id)
+
+    historico_crescente = current_user.abastecimentos.order_by(Abastecimento.data.asc(), Abastecimento.km_atual.asc()).all()
     historico_final = list(reversed(historico_crescente))
-    
+    metricas = _metricas_combustivel(current_user, date.today().replace(day=1), date.today())
+
     return render_template('abastecimento.html', 
         parametro=parametro_hoje, 
         tipos_combustivel=tipos_combustivel, 
         hoje=hoje, 
-        historico=historico_final
+        historico=historico_final,
+        metricas=metricas
     )
     
 
@@ -799,10 +800,152 @@ def dashboard():
         faturamento_aguardado_semana = 0.0
         meta_semana_atingida = (meta_restante_hoje <= 0)
 
-    # --- 6. EXTRATO DIÁRIO (Lógica de cores revisada) ---
+    # --- 6. INDICADORES OPERACIONAIS E PROJEÇÕES ---
+    km_mes = float(db.session.query(func.sum(LancamentoDiario.km_rodado)).filter(
+        LancamentoDiario.user_id == current_user.id,
+        LancamentoDiario.data.between(start_date_month, end_date_month)
+    ).scalar() or 0.0)
+
+    metricas_combustivel = _metricas_combustivel(current_user, start_date_month, end_date_month)
+
+    dias_trabalho_semana = int(parametro.dias_trabalho_semana or 0)
+    if dias_trabalho_semana > 0:
+        dias_uteis_mes = sum(
+            1 for dia_num in range(1, last_day_of_month_num + 1)
+            if date(year, month, dia_num).weekday() < dias_trabalho_semana
+        )
+    else:
+        dias_uteis_mes = last_day_of_month_num
+
+    mes_em_andamento = start_date_month <= today <= end_date_month
+    if not mes_em_andamento:
+        dias_decorridos = dias_uteis_mes if end_date_month < today else 0
+    elif dias_trabalho_semana > 0:
+        dias_decorridos = sum(
+            1 for dia_num in range(1, today.day + 1)
+            if date(year, month, dia_num).weekday() < dias_trabalho_semana
+        )
+    else:
+        dias_decorridos = today.day
+
+    dias_restantes = max(dias_uteis_mes - dias_decorridos, 0)
+    divisor = max(dias_decorridos, 1)
+
+    faturamento_rides_mes = float(faturamento_bruto_real_mes) - float(receitas_fixas_recebidas_mes)
+    receitas_fixas_total_mes = sum(rr.valor or 0.0 for rr in registros_receitas_mes)
+
+    if mes_em_andamento and dias_decorridos > 0:
+        projecao_faturamento_rides = (faturamento_rides_mes / divisor) * dias_uteis_mes
+        projecao_km = (km_mes / divisor) * dias_uteis_mes
+        if metricas_combustivel['consumo_recente'] > 0 and metricas_combustivel['preco_recente_litro'] > 0:
+            projecao_combustivel = (
+                projecao_km / metricas_combustivel['consumo_recente']
+            ) * metricas_combustivel['preco_recente_litro']
+        else:
+            projecao_combustivel = (float(abastecimentos_mes) / divisor) * dias_uteis_mes
+        projecao_custos_variaveis = (float(custos_variaveis_mes) / divisor) * dias_uteis_mes
+    else:
+        projecao_faturamento_rides = faturamento_rides_mes
+        projecao_km = km_mes
+        projecao_combustivel = float(abastecimentos_mes)
+        projecao_custos_variaveis = float(custos_variaveis_mes)
+
+    projecao_faturamento_total = projecao_faturamento_rides + receitas_fixas_total_mes
+    projecao_resultado = (
+        projecao_faturamento_total
+        - projecao_combustivel
+        - projecao_custos_variaveis
+        - float(custos_fixos_total_mes)
+    )
+
+    receita_por_km = (faturamento_rides_mes / km_mes) if km_mes > 0 else 0.0
+    custo_variavel_por_km = (
+        (float(abastecimentos_mes) + float(custos_variaveis_mes)) / km_mes
+    ) if km_mes > 0 else 0.0
+    margem_por_km = receita_por_km - custo_variavel_por_km
+    resultado_por_km = (
+        (
+            float(faturamento_bruto_real_mes)
+            - float(abastecimentos_mes)
+            - float(custos_variaveis_mes)
+            - float(custos_fixos_pagos_mes)
+        ) / km_mes
+    ) if km_mes > 0 else 0.0
+
+    if margem_por_km > 0:
+        ponto_equilibrio_km = float(custos_fixos_total_mes) / margem_por_km
+        ponto_equilibrio_receita = float(custos_fixos_total_mes) * receita_por_km / margem_por_km
+        km_faltantes_equilibrio = max(ponto_equilibrio_km - km_mes, 0.0)
+    else:
+        ponto_equilibrio_km = None
+        ponto_equilibrio_receita = None
+        km_faltantes_equilibrio = None
+
+    meta_restante_mes = max(float(meta_mensal_configurada) - float(faturamento_bruto_real_mes), 0.0)
+    if receita_por_km > 0:
+        km_necessarios_meta = max(float(meta_mensal_configurada) - receitas_fixas_total_mes, 0.0) / receita_por_km
+        km_faltantes_meta = max(km_necessarios_meta - km_mes, 0.0)
+    else:
+        km_necessarios_meta = None
+        km_faltantes_meta = None
+
+    meta_diaria_necessaria = (meta_restante_mes / dias_restantes) if dias_restantes > 0 else meta_restante_mes
+    pct_meta_atingida = (
+        float(faturamento_bruto_real_mes) / float(meta_mensal_configurada) * 100.0
+    ) if meta_mensal_configurada else 0.0
+    pct_combustivel_faturamento = (
+        float(abastecimentos_mes) / float(faturamento_bruto_real_mes) * 100.0
+    ) if faturamento_bruto_real_mes else 0.0
+
+    valor_km_meta = float(parametro.valor_km_meta or 0.0)
+    valor_km_minimo = float(parametro.valor_km_minimo or 0.0)
+    if valor_km_meta > 0 and receita_por_km >= valor_km_meta:
+        cor_valor_km = 'success'
+    elif valor_km_minimo > 0 and receita_por_km >= valor_km_minimo:
+        cor_valor_km = 'warning'
+    else:
+        cor_valor_km = 'danger'
+
+    operacional = {
+        'km_mes': km_mes,
+        'media_diaria_km': (km_mes / divisor),
+        'dias_uteis_mes': dias_uteis_mes,
+        'dias_decorridos': dias_decorridos,
+        'dias_restantes': dias_restantes,
+        'receita_por_km': receita_por_km,
+        'custo_variavel_por_km': custo_variavel_por_km,
+        'margem_por_km': margem_por_km,
+        'resultado_por_km': resultado_por_km,
+        'cor_valor_km': cor_valor_km,
+        'valor_km_meta': valor_km_meta,
+        'valor_km_minimo': valor_km_minimo,
+        'ponto_equilibrio_km': ponto_equilibrio_km,
+        'ponto_equilibrio_receita': ponto_equilibrio_receita,
+        'km_faltantes_equilibrio': km_faltantes_equilibrio,
+        'km_necessarios_meta': km_necessarios_meta,
+        'km_faltantes_meta': km_faltantes_meta,
+        'meta_restante_mes': meta_restante_mes,
+        'meta_diaria_necessaria': meta_diaria_necessaria,
+        'pct_meta_atingida': pct_meta_atingida,
+        'pct_combustivel_faturamento': pct_combustivel_faturamento,
+        'projecao_faturamento_rides': projecao_faturamento_rides,
+        'projecao_faturamento_total': projecao_faturamento_total,
+        'projecao_combustivel': projecao_combustivel,
+        'projecao_custos_variaveis': projecao_custos_variaveis,
+        'projecao_km': projecao_km,
+        'projecao_resultado': projecao_resultado,
+        'receitas_fixas_total_mes': receitas_fixas_total_mes,
+        'custo_combustivel_mes': float(abastecimentos_mes),
+        'custo_variavel_mes': float(custos_variaveis_mes),
+        'mes_em_andamento': mes_em_andamento,
+    }
+    operacional.update(metricas_combustivel)
+
+    # --- 7. EXTRATO DIÁRIO (Lógica de cores revisada) ---
     extrato_diario = current_user.lancamentos_diarios.filter(LancamentoDiario.data.between(start_date_month, end_date_month)).order_by(LancamentoDiario.data.desc()).all()
 
     for dia in extrato_diario:
+        dia.km_rodado = dia.km_rodado or 0
         param_dia = get_parametros_for_date(current_user, dia.data)
         meta_do_dia = _calcular_meta_esperada_dia(dia.data, param_dia)
         faturamento_desempenho_total = db.session.query(func.sum(Faturamento.valor)).filter(
@@ -817,15 +960,26 @@ def dashboard():
         elif param_dia and param_dia.valor_km_minimo and valor_km >= param_dia.valor_km_minimo:
             cor_km = 'warning'
         
+        consumo_dia = metricas_combustivel['consumo_recente'] or metricas_combustivel['consumo_geral']
+        preco_dia = metricas_combustivel['preco_recente_litro'] or metricas_combustivel['preco_medio_litro']
+        custo_combustivel_dia = 0.0
+        if consumo_dia > 0 and preco_dia > 0 and dia.km_rodado:
+            custo_combustivel_dia = (dia.km_rodado / consumo_dia) * preco_dia
+
         dia.faturamento_realizado = dia.faturamento_total
         dia.faturamento_desempenho_total = faturamento_desempenho_total
         dia.meta_esperada = meta_do_dia
         dia.valor_km = valor_km
         dia.cor_km = cor_km
+        dia.custo_combustivel_estimado = custo_combustivel_dia
+        dia.liquido_dia = dia.faturamento_total - custo_combustivel_dia - dia.custos_variaveis_total
 
-    # --- 7. RENDER TEMPLATE ---
+    liquido_mes_estimado = sum(d.liquido_dia for d in extrato_diario)
+
+    # --- 8. RENDER TEMPLATE ---
     return render_template(
         'dashboard.html', title='Dashboard Financeiro', parametro=parametro,
+        operacional=operacional,
         meta_restante_hoje=meta_restante_hoje, meta_excedente_hoje=meta_excedente_hoje,
         meta_hoje_atingida=(meta_restante_hoje <= 0),
         meta_ajustada_para_hoje=meta_ajustada_para_hoje, meta_diaria_base=meta_diaria_base,
@@ -834,7 +988,7 @@ def dashboard():
         faturamento_bruto_real_mes=faturamento_bruto_real_mes, saldo_atual_real=saldo_atual_real,
         meta_mensal_bruta=meta_mensal_configurada, projecao_lucro_operacional=projecao_lucro_operacional,
         extrato_diario=extrato_diario, registros_custos=registros_custos_mes,
-        registros_receitas=registros_receitas_mes,
+        registros_receitas=registros_receitas_mes, liquido_mes_estimado=liquido_mes_estimado,
         custos_fixos_total=custos_fixos_total_mes, current_month=month,
         current_year=year, form=CustoForm(), receita_form=ReceitaForm()
     )
@@ -1013,35 +1167,231 @@ def cadastro():
 
 
 
+def _ultimo_km_conhecido(user, data_referencia, lancamento_id_excluir=None):
+    candidatos = []
+
+    consulta = user.lancamentos_diarios.filter(
+        LancamentoDiario.km_atual.isnot(None),
+        LancamentoDiario.data <= data_referencia,
+    )
+    if lancamento_id_excluir:
+        consulta = consulta.filter(LancamentoDiario.id != lancamento_id_excluir)
+    ultimo_lancamento = consulta.order_by(
+        LancamentoDiario.data.desc(), LancamentoDiario.km_atual.desc()
+    ).first()
+    if ultimo_lancamento:
+        candidatos.append(ultimo_lancamento.km_atual)
+
+    ultimo_abastecimento = user.abastecimentos.filter(
+        Abastecimento.data <= data_referencia
+    ).order_by(Abastecimento.data.desc(), Abastecimento.km_atual.desc()).first()
+    if ultimo_abastecimento:
+        candidatos.append(ultimo_abastecimento.km_atual)
+
+    tem_abastecimento = Abastecimento.query.filter_by(user_id=user.id).first() is not None
+    parametro = get_parametros_for_date(user, data_referencia)
+    if not tem_abastecimento and parametro and parametro.km_atual:
+        candidatos.append(parametro.km_atual)
+
+    return max(candidatos) if candidatos else None
+
+
+def _segmentos_consumo(abastecimentos):
+    segmentos = []
+    ultimo_cheio = None
+    litros_parciais = 0.0
+
+    for abastecimento in abastecimentos:
+        if abastecimento.tanque_cheio:
+            if ultimo_cheio is not None:
+                km_rodados = abastecimento.km_atual - ultimo_cheio.km_atual
+                litros_consumidos = litros_parciais + (abastecimento.litros or 0.0)
+                if km_rodados > 0 and litros_consumidos > 0:
+                    segmentos.append({
+                        'abastecimento': abastecimento,
+                        'km': float(km_rodados),
+                        'litros': float(litros_consumidos),
+                        'media': km_rodados / litros_consumidos,
+                        'data_fim': abastecimento.data,
+                    })
+            ultimo_cheio = abastecimento
+            litros_parciais = 0.0
+        else:
+            litros_parciais += abastecimento.litros or 0.0
+
+    return segmentos
+
+
+def _trechos_abastecimento(abastecimentos):
+    trechos = []
+    for anterior, atual in zip(abastecimentos, abastecimentos[1:]):
+        km_rodados = atual.km_atual - anterior.km_atual
+        litros = atual.litros or 0.0
+        if km_rodados > 0 and litros > 0:
+            trechos.append({
+                'abastecimento': atual,
+                'km': float(km_rodados),
+                'litros': float(litros),
+                'media': km_rodados / litros,
+                'data_fim': atual.data,
+                'tanque_cheio': bool(atual.tanque_cheio and anterior.tanque_cheio),
+            })
+    return trechos
+
+
+def _media_ponderada_segmentos(segmentos):
+    km_total = sum(s['km'] for s in segmentos)
+    litros_total = sum(s['litros'] for s in segmentos)
+    return (km_total / litros_total) if litros_total > 0 else 0.0
+
+
 def recalcular_medias(user_id):
     user = User.query.get(user_id)
     if not user:
         return
 
-    # Busca abastecimentos pelo user_id
-    abastecimentos = Abastecimento.query.filter_by(user_id=user.id).order_by(
-        Abastecimento.data, Abastecimento.km_atual
+    abastecimentos = user.abastecimentos.order_by(
+        Abastecimento.data.asc(), Abastecimento.km_atual.asc(), Abastecimento.id.asc()
     ).all()
-    
-    # Busca o parâmetro ATIVO atualmente para atualizar a média geral e o KM
+
+    for abastecimento in abastecimentos:
+        abastecimento.media_consumo_calculada = None
+
+    trechos = _trechos_abastecimento(abastecimentos)
+    for trecho in trechos:
+        trecho['abastecimento'].media_consumo_calculada = trecho['media']
+
+    segmentos = _segmentos_consumo(abastecimentos)
+    for segmento in segmentos:
+        segmento['abastecimento'].media_consumo_calculada = segmento['media']
+
+    total_km = sum(s['km'] for s in segmentos)
+    total_litros = sum(s['litros'] for s in segmentos)
+    if total_litros <= 0:
+        total_km = sum(t['km'] for t in trechos)
+        total_litros = sum(t['litros'] for t in trechos)
+
     parametro_ativo = get_parametros_for_date(user, date.today())
-    if not parametro_ativo:
-        return # Não faz nada se não houver um parâmetro ativo
+    if parametro_ativo:
+        if total_litros > 0:
+            parametro_ativo.media_consumo = total_km / total_litros
+        km_conhecidos = [a.km_atual for a in abastecimentos]
+        km_conhecidos += [
+            l.km_atual
+            for l in user.lancamentos_diarios.filter(LancamentoDiario.km_atual.isnot(None)).all()
+        ]
+        if km_conhecidos:
+            parametro_ativo.km_atual = max(km_conhecidos)
 
-    # ... (Toda a lógica interna de cálculo de média permanece a mesma)
-    total_km_rodados = 0
-    total_litros_consumidos = 0
-    # ...
-
-    # Ao final, atualiza o objeto de parâmetro ATIVO
-    if total_litros_consumidos > 0:
-        parametro_ativo.media_consumo = total_km_rodados / total_litros_consumidos
-    # ... (lógica de fallback para cálculo de média)
-
-    if abastecimentos:
-        parametro_ativo.km_atual = max(a.km_atual for a in abastecimentos)
-    
     db.session.commit()
+
+
+def _metricas_combustivel(user, start_date=None, end_date=None):
+    metricas = {
+        'tem_dados': False,
+        'consumo_geral': 0.0,
+        'consumo_recente': 0.0,
+        'variacao_consumo': 0.0,
+        'preco_medio_litro': 0.0,
+        'preco_recente_litro': 0.0,
+        'litros_mes': 0.0,
+        'custo_mes': 0.0,
+        'consumo_mes': 0.0,
+        'origem_consumo': '',
+        'litros_ultimo': 0.0,
+        'km_desde_ultimo': 0.0,
+        'autonomia_total': 0.0,
+        'autonomia_restante': 0.0,
+        'pct_autonomia': 0.0,
+        'custo_por_km': 0.0,
+    }
+
+    abastecimentos = user.abastecimentos.order_by(
+        Abastecimento.data.asc(), Abastecimento.km_atual.asc(), Abastecimento.id.asc()
+    ).all()
+    if not abastecimentos:
+        return metricas
+
+    metricas['tem_dados'] = True
+    trechos = _trechos_abastecimento(abastecimentos)
+    segmentos = _segmentos_consumo(abastecimentos)
+
+    if segmentos:
+        metricas['consumo_geral'] = _media_ponderada_segmentos(segmentos)
+        metricas['origem_consumo'] = 'cheio'
+    else:
+        metricas['consumo_geral'] = _media_ponderada_segmentos(trechos)
+        if trechos:
+            metricas['origem_consumo'] = 'parcial'
+
+    consumo_recente = _media_ponderada_segmentos(trechos[-3:])
+    if consumo_recente <= 0:
+        consumo_recente = _media_ponderada_segmentos(segmentos[-3:])
+    if consumo_recente <= 0:
+        consumo_recente = metricas['consumo_geral']
+
+    if consumo_recente <= 0:
+        parametro = get_parametros_for_date(user, date.today())
+        consumo_informado = float(getattr(parametro, 'media_consumo', 0.0) or 0.0) if parametro else 0.0
+        if consumo_informado > 0:
+            consumo_recente = consumo_informado
+            metricas['consumo_geral'] = consumo_informado
+            metricas['origem_consumo'] = 'informado'
+
+    metricas['consumo_recente'] = consumo_recente
+    if metricas['consumo_geral'] > 0:
+        metricas['variacao_consumo'] = (
+            (metricas['consumo_recente'] - metricas['consumo_geral']) / metricas['consumo_geral'] * 100.0
+        )
+
+    litros_total = sum(a.litros or 0.0 for a in abastecimentos)
+    custo_total = sum(a.valor_total or 0.0 for a in abastecimentos)
+    if litros_total > 0:
+        metricas['preco_medio_litro'] = custo_total / litros_total
+
+    ultimos = abastecimentos[-5:]
+    litros_recentes = sum(a.litros or 0.0 for a in ultimos)
+    custo_recente = sum(a.valor_total or 0.0 for a in ultimos)
+    metricas['preco_recente_litro'] = (
+        custo_recente / litros_recentes
+    ) if litros_recentes > 0 else metricas['preco_medio_litro']
+
+    consumo_projecao = metricas['consumo_recente'] or metricas['consumo_geral']
+    if consumo_projecao > 0:
+        metricas['custo_por_km'] = metricas['preco_recente_litro'] / consumo_projecao
+
+    ultimo = abastecimentos[-1]
+    litros_ultimo = float(ultimo.litros or 0.0)
+    km_desde_ultimo = float(db.session.query(func.sum(LancamentoDiario.km_rodado)).filter(
+        LancamentoDiario.user_id == user.id,
+        LancamentoDiario.data > ultimo.data,
+    ).scalar() or 0.0)
+    metricas['litros_ultimo'] = litros_ultimo
+    metricas['km_desde_ultimo'] = km_desde_ultimo
+
+    if consumo_projecao > 0 and litros_ultimo > 0:
+        autonomia_total = litros_ultimo * consumo_projecao
+        metricas['autonomia_total'] = autonomia_total
+        metricas['autonomia_restante'] = max(autonomia_total - km_desde_ultimo, 0.0)
+        if autonomia_total > 0:
+            metricas['pct_autonomia'] = min(
+                metricas['autonomia_restante'] / autonomia_total * 100.0, 100.0
+            )
+
+    if start_date and end_date:
+        abastecimentos_mes = [a for a in abastecimentos if start_date <= a.data <= end_date]
+        metricas['litros_mes'] = sum(a.litros or 0.0 for a in abastecimentos_mes)
+        metricas['custo_mes'] = sum(a.valor_total or 0.0 for a in abastecimentos_mes)
+        segmentos_mes = [s for s in segmentos if start_date <= s['data_fim'] <= end_date]
+        trechos_mes = [t for t in trechos if start_date <= t['data_fim'] <= end_date]
+        if segmentos_mes:
+            metricas['consumo_mes'] = _media_ponderada_segmentos(segmentos_mes)
+        elif trechos_mes:
+            metricas['consumo_mes'] = _media_ponderada_segmentos(trechos_mes)
+        else:
+            metricas['consumo_mes'] = consumo_projecao
+
+    return metricas
 
 
 

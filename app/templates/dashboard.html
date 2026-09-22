@@ -150,29 +150,367 @@ content %} {% set months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio',
       </div>
     </div>
 
-    <!-- Projeção Lucro Operacional -->
+    <!-- Resultado Projetado (Real) -->
     <div class="col-md-6 mb-4">
       <div class="card h-100">
         <div class="card-body text-center">
-          <h5 class="card-title">Projeção Lucro</h5>
-          <p class="card-text display-6 fw-bold text-info">
-            R$ {{ "%.2f"|format(projecao_lucro_operacional) }}
+          <h5 class="card-title">
+            {% if operacional.mes_em_andamento %}Resultado Projetado{% else %}Resultado do Mês{% endif %}
+          </h5>
+          <p
+            class="card-text display-6 fw-bold {% if operacional.projecao_resultado >= 0 %}text-success{% else %}text-danger{% endif %}"
+          >
+            R$ {{ "%.2f"|format(operacional.projecao_resultado) }}
           </p>
           <small class="text-muted"
-            >(Meta Bruta Mensal - Custos Variáveis)</small
+            >(Faturamento projetado - combustível - variáveis - fixos)</small
           >
         </div>
       </div>
     </div>
   </div>
 
+  <!-- INDICADORES OPERACIONAIS -->
+  <h4 class="mt-2 mb-3">Indicadores Operacionais</h4>
+  <div class="row">
+    <div class="col-md-6 col-xl-4 mb-4">
+      <div class="card h-100">
+        <div class="card-body text-center">
+          <h6 class="card-title text-uppercase text-muted">Consumo Médio</h6>
+          <p class="card-text display-6 fw-bold mb-1">
+            {{ "%.2f"|format(operacional.consumo_recente) }}
+            <small class="fs-5 fw-normal">km/L</small>
+          </p>
+          {% if operacional.variacao_consumo %}
+          <span
+            class="badge bg-{% if operacional.variacao_consumo >= 0 %}success{% else %}danger{% endif %}"
+          >
+            {% if operacional.variacao_consumo > 0 %}+{% endif %}{{
+            "%.1f"|format(operacional.variacao_consumo) }}% vs. histórico
+          </span>
+          {% endif %}
+          <small class="d-block text-muted mt-2">
+            Média geral: {{ "%.2f"|format(operacional.consumo_geral) }} km/L
+          </small>
+          <small class="d-block text-muted">
+            {% if operacional.origem_consumo == 'cheio' %}Base: tanque cheio
+            {% elif operacional.origem_consumo == 'parcial' %}Base: estimativa por trechos (sem tanque cheio)
+            {% elif operacional.origem_consumo == 'informado' %}Base: consumo informado nos parâmetros
+            {% endif %}
+          </small>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-6 col-xl-4 mb-4">
+      <div class="card h-100">
+        <div class="card-body text-center">
+          <h6 class="card-title text-uppercase text-muted">
+            Custo do Combustível
+          </h6>
+          <p class="card-text display-6 fw-bold mb-1">
+            R$ {{ "%.2f"|format(operacional.custo_por_km) }}
+            <small class="fs-5 fw-normal">/km</small>
+          </p>
+          <small class="d-block text-muted">
+            Preço médio: R$ {{ "%.2f"|format(operacional.preco_recente_litro)
+            }}/L
+          </small>
+          <small class="d-block text-muted">
+            Litros no mês: {{ "%.1f"|format(operacional.litros_mes) }} L
+          </small>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-6 col-xl-4 mb-4">
+      <div class="card h-100">
+        <div class="card-body text-center">
+          <h6 class="card-title text-uppercase text-muted">
+            Autonomia do Último Abastecimento
+          </h6>
+          {% if operacional.autonomia_total > 0 %}
+          <p class="card-text display-6 fw-bold mb-1">
+            {{ "%.0f"|format(operacional.autonomia_restante) }}
+            <small class="fs-5 fw-normal">km</small>
+          </p>
+          <div class="progress mb-2" style="height: 8px">
+            <div
+              class="progress-bar bg-{% if operacional.pct_autonomia > 30 %}success{% elif operacional.pct_autonomia > 15 %}warning{% else %}danger{% endif %}"
+              role="progressbar"
+              style="width: {{ operacional.pct_autonomia }}%"
+            ></div>
+          </div>
+          <small class="d-block text-muted">
+            Abastecidos {{ "%.1f"|format(operacional.litros_ultimo) }} L → ~{{
+            "%.0f"|format(operacional.autonomia_total) }} km
+          </small>
+          <small class="d-block text-muted">
+            Rodados desde então: {{ "%.0f"|format(operacional.km_desde_ultimo) }} km
+          </small>
+          <small class="d-block text-muted fst-italic">
+            Não conta eventual combustível residual no tanque.
+          </small>
+          {% elif operacional.tem_dados %}
+          <p class="card-text text-muted mt-4">
+            Registre mais de um abastecimento ou informe o consumo do veículo
+            nos parâmetros para estimar a autonomia.
+          </p>
+          {% else %}
+          <p class="card-text text-muted mt-4">
+            Registre um abastecimento para calcular a autonomia.
+          </p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-6 col-xl-4 mb-4">
+      <div class="card h-100">
+        <div class="card-body text-center">
+          <h6 class="card-title text-uppercase text-muted">KM Rodado no Mês</h6>
+          <p class="card-text display-6 fw-bold mb-1">
+            {{ "%.0f"|format(operacional.km_mes) }}
+            <small class="fs-5 fw-normal">km</small>
+          </p>
+          <small class="d-block text-muted">
+            Média: {{ "%.1f"|format(operacional.media_diaria_km) }} km/dia útil
+          </small>
+          <small class="d-block text-muted">
+            Projeção do mês: {{ "%.0f"|format(operacional.projecao_km) }} km
+          </small>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-6 col-xl-4 mb-4">
+      <div class="card h-100">
+        <div class="card-body text-center">
+          <h6 class="card-title text-uppercase text-muted">Valor por KM</h6>
+          <p class="card-text display-6 fw-bold mb-1">
+            R$ {{ "%.2f"|format(operacional.receita_por_km) }}
+            <small class="fs-5 fw-normal">/km</small>
+          </p>
+          <span class="badge bg-{{ operacional.cor_valor_km }}">
+            {% if operacional.cor_valor_km == 'success' %}Acima da meta{% elif
+            operacional.cor_valor_km == 'warning' %}Acima do mínimo{% else
+            %}Abaixo do mínimo{% endif %}
+          </span>
+          <small class="d-block text-muted mt-2">
+            Meta: R$ {{ "%.2f"|format(operacional.valor_km_meta) }}/km • Mínimo:
+            R$ {{ "%.2f"|format(operacional.valor_km_minimo) }}/km
+          </small>
+          <small class="d-block text-muted">
+            Margem de contribuição: R$ {{
+            "%.2f"|format(operacional.margem_por_km) }}/km
+          </small>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-6 col-xl-4 mb-4">
+      <div class="card h-100">
+        <div class="card-body text-center">
+          <h6 class="card-title text-uppercase text-muted">
+            Combustível no Faturamento
+          </h6>
+          <p class="card-text display-6 fw-bold mb-1">
+            {{ "%.1f"|format(operacional.pct_combustivel_faturamento) }}%
+          </p>
+          <small class="d-block text-muted">
+            R$ {{ "%.2f"|format(operacional.custo_combustivel_mes) }} gastos no
+            mês
+          </small>
+          <small class="d-block text-muted">
+            Consumo do mês: {{ "%.2f"|format(operacional.consumo_mes) }} km/L
+          </small>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PROJEÇÕES DO MÊS -->
+  <h4 class="mt-2 mb-3">Projeções do Mês</h4>
+  <div class="row">
+    <div class="col-md-6 col-xl-3 mb-4">
+      <div class="card h-100">
+        <div class="card-body text-center">
+          <h6 class="card-title text-uppercase text-muted">Faturamento</h6>
+          <p class="card-text fs-3 fw-bold">
+            R$ {{ "%.2f"|format(operacional.projecao_faturamento_total) }}
+          </p>
+          <small class="d-block text-muted">
+            Corridas: R$ {{ "%.2f"|format(operacional.projecao_faturamento_rides) }}
+          </small>
+          <small class="d-block text-muted">
+            Receitas fixas: R$ {{
+            "%.2f"|format(operacional.receitas_fixas_total_mes) }}
+          </small>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-6 col-xl-3 mb-4">
+      <div class="card h-100">
+        <div class="card-body text-center">
+          <h6 class="card-title text-uppercase text-muted">
+            Combustível
+          </h6>
+          <p class="card-text fs-3 fw-bold">
+            R$ {{ "%.2f"|format(operacional.projecao_combustivel) }}
+          </p>
+          <small class="d-block text-muted">
+            {{ "%.0f"|format(operacional.projecao_km) }} km ÷ {{
+            "%.2f"|format(operacional.consumo_recente) }} km/L × R$ {{
+            "%.2f"|format(operacional.preco_recente_litro) }}/L
+          </small>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-6 col-xl-3 mb-4">
+      <div class="card h-100">
+        <div class="card-body text-center">
+          <h6 class="card-title text-uppercase text-muted">
+            Custos Variáveis
+          </h6>
+          <p class="card-text fs-3 fw-bold">
+            R$ {{ "%.2f"|format(operacional.projecao_custos_variaveis) }}
+          </p>
+          <small class="d-block text-muted">
+            + Custos fixos: R$ {{ "%.2f"|format(custos_fixos_total) }}
+          </small>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-6 col-xl-3 mb-4">
+      <div class="card h-100">
+        <div class="card-body text-center">
+          <h6 class="card-title text-uppercase text-muted">Resultado</h6>
+          <p
+            class="card-text fs-3 fw-bold {% if operacional.projecao_resultado >= 0 %}text-success{% else %}text-danger{% endif %}"
+          >
+            R$ {{ "%.2f"|format(operacional.projecao_resultado) }}
+          </p>
+          <small class="d-block text-muted">
+            Lucro por km: R$ {{ "%.2f"|format(operacional.resultado_por_km) }}
+          </small>
+          <small class="d-block text-muted">
+            Lucro implícito na meta: R$ {{
+            "%.2f"|format(projecao_lucro_operacional) }}
+          </small>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- META E PONTO DE EQUILÍBRIO -->
+  <div class="row">
+    <div class="col-lg-6 mb-4">
+      <div class="card h-100 border-primary">
+        <div class="card-header bg-primary text-white">
+          <strong>Meta do Mês</strong>
+        </div>
+        <div class="card-body">
+          {% if meta_mensal_bruta > 0 %}
+          <div class="progress mb-3" style="height: 20px">
+            <div
+              class="progress-bar {% if operacional.pct_meta_atingida >= 100 %}bg-success{% endif %}"
+              role="progressbar"
+              style="width: {{ operacional.pct_meta_atingida if operacional.pct_meta_atingida < 100 else 100 }}%"
+            >
+              {{ "%.0f"|format(operacional.pct_meta_atingida) }}%
+            </div>
+          </div>
+          <p class="mb-1">
+            Realizado: <strong>R$ {{ "%.2f"|format(faturamento_bruto_real_mes) }}</strong>
+            de R$ {{ "%.2f"|format(meta_mensal_bruta) }}
+          </p>
+          {% else %}
+          <p class="text-muted">Nenhuma meta mensal configurada.</p>
+          {% endif %} {% if operacional.meta_restante_mes > 0 and operacional.dias_restantes > 0 %}
+          <p class="mb-1">
+            Faltam <strong>R$ {{ "%.2f"|format(operacional.meta_restante_mes) }}</strong>
+            • Ritmo necessário:
+            <strong>R$ {{ "%.2f"|format(operacional.meta_diaria_necessaria) }}/dia</strong>
+            em {{ operacional.dias_restantes }} dia(s) útil(eis)
+          </p>
+          {% if operacional.km_faltantes_meta is not none %}
+          <p class="mb-0 text-muted">
+            No R$/km atual, são necessários ~{{
+            "%.0f"|format(operacional.km_necessarios_meta) }} km no mês (faltam
+            ~{{ "%.0f"|format(operacional.km_faltantes_meta) }} km).
+          </p>
+          {% endif %} {% elif meta_mensal_bruta > 0 %}
+          <p class="mb-0 text-success fw-bold">Meta do mês atingida!</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-6 mb-4">
+      <div class="card h-100 border-secondary">
+        <div class="card-header">
+          <strong>Ponto de Equilíbrio (Custos Fixos)</strong>
+        </div>
+        <div class="card-body">
+          {% if operacional.ponto_equilibrio_km %}
+          <p class="display-6 fw-bold mb-1">
+            R$ {{ "%.2f"|format(operacional.ponto_equilibrio_receita) }}
+          </p>
+          <p class="mb-2">
+            Equivale a <strong>{{ "%.0f"|format(operacional.ponto_equilibrio_km) }} km</strong>
+            faturados para cobrir os custos fixos do mês.
+          </p>
+          {% if operacional.km_faltantes_equilibrio > 0 %}
+          <span class="badge bg-warning text-dark">
+            Faltam {{ "%.0f"|format(operacional.km_faltantes_equilibrio) }} km
+            ({{ "%.0f"|format(operacional.km_faltantes_equilibrio * operacional.receita_por_km) }}
+            em faturamento)
+          </span>
+          {% else %}
+          <span class="badge bg-success">Custos fixos já cobertos</span>
+          {% endif %}
+          <hr />
+          <small class="d-block text-muted">
+            Receita: R$ {{ "%.2f"|format(operacional.receita_por_km) }}/km •
+            Custo variável: R$ {{
+            "%.2f"|format(operacional.custo_variavel_por_km) }}/km
+          </small>
+          <small class="d-block text-muted">
+            Custos fixos no mês: R$ {{ "%.2f"|format(custos_fixos_total) }}
+          </small>
+          {% else %}
+          <p class="text-muted mb-0">
+            Margem por km não positiva no período (receita de R$ {{
+            "%.2f"|format(operacional.receita_por_km) }}/km contra custo
+            variável de R$ {{
+            "%.2f"|format(operacional.custo_variavel_por_km) }}/km), portanto
+            não há ponto de equilíbrio por km.
+          </p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- EXTRATO E CUSTOS FIXOS -->
+
   <!-- EXTRATO E CUSTOS FIXOS -->
   <div class="row mt-2">
     <!-- Extrato Detalhado do Mês -->
     <div class="col-lg-8 mb-4">
       <div class="card">
-        <div class="card-header">
+        <div class="card-header d-flex justify-content-between align-items-center">
           <strong>Extrato Detalhado do Mês</strong>
+          <span class="small">
+            Líquido estimado:
+            <strong
+              class="{% if liquido_mes_estimado >= 0 %}text-success{% else %}text-danger{% endif %}"
+              >R$ {{ "%.2f"|format(liquido_mes_estimado) }}</strong
+            >
+          </span>
         </div>
         <div class="card-body p-0" style="max-height: 400px; overflow-y: auto">
           <ul class="list-group list-group-flush">
@@ -198,6 +536,26 @@ content %} {% set months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio',
                 <div class="col-md-5 text-end">
                   <span class="badge bg-{{ dia.cor_km }} fs-6">
                     Valor/KM: R$ {{ "%.2f"|format(dia.valor_km) }}
+                  </span>
+                </div>
+              </div>
+              <div class="row mt-2">
+                <div class="col-12 small text-muted d-flex flex-wrap gap-3">
+                  <span>
+                    <i class="bi bi-speedometer2"></i> {{ dia.km_rodado }} km
+                  </span>
+                  <span>
+                    <i class="bi bi-fuel-pump"></i> Combustível ~R$ {{
+                    "%.2f"|format(dia.custo_combustivel_estimado) }}
+                  </span>
+                  <span>
+                    <i class="bi bi-receipt"></i> Custos avulsos: R$ {{
+                    "%.2f"|format(dia.custos_variaveis_total) }}
+                  </span>
+                  <span
+                    class="fw-bold {% if dia.liquido_dia >= 0 %}text-success{% else %}text-danger{% endif %}"
+                  >
+                    Líquido do dia: R$ {{ "%.2f"|format(dia.liquido_dia) }}
                   </span>
                 </div>
               </div>

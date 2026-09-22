@@ -91,6 +91,7 @@ class LancamentoDiario(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     data = db.Column(db.Date, nullable=False, index=True)
+    km_atual = db.Column(db.Integer, nullable=True)
     km_rodado = db.Column(db.Integer, default=0)
     faturamentos = db.relationship('Faturamento', backref='lancamento', lazy='dynamic', cascade="all, delete-orphan")
     custos_variaveis = db.relationship('CustoVariavel', backref='lancamento', lazy='dynamic', cascade="all, delete-orphan")

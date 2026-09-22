@@ -65,6 +65,48 @@ endblock %} {% block styles %}
     <!-- Coluna do Formulário -->
     <div class="form-column">
       <h2 class="text-center mb-4">Lançar Abastecimento</h2>
+
+      {% if metricas.tem_dados %}
+      <div class="row text-center g-2 mb-3">
+        <div class="col-4">
+          <div class="border rounded p-2 h-100">
+            <small class="text-muted d-block">Consumo recente</small>
+            <strong>{{ "%.2f"|format(metricas.consumo_recente) }} km/L</strong>
+          </div>
+        </div>
+        <div class="col-4">
+          <div class="border rounded p-2 h-100">
+            <small class="text-muted d-block">Preço médio</small>
+            <strong>R$ {{ "%.2f"|format(metricas.preco_recente_litro) }}/L</strong>
+          </div>
+        </div>
+        <div class="col-4">
+          <div class="border rounded p-2 h-100">
+            <small class="text-muted d-block">Custo/km</small>
+            <strong>R$ {{ "%.2f"|format(metricas.custo_por_km) }}</strong>
+          </div>
+        </div>
+      </div>
+      {% if metricas.autonomia_total > 0 %}
+      <div class="alert alert-info py-2 px-3 small mb-3">
+        <i class="bi bi-speedometer2"></i>
+        Último abastecimento ({{ "%.1f"|format(metricas.litros_ultimo) }} L)
+        rende <strong>~{{ "%.0f"|format(metricas.autonomia_total) }} km</strong>.
+        Já rodados {{ "%.0f"|format(metricas.km_desde_ultimo) }} km, restam
+        <strong>~{{ "%.0f"|format(metricas.autonomia_restante) }} km</strong> de
+        autonomia.
+        <span class="d-block fst-italic">
+          Estimativa só com os litros do último abastecimento; não conta
+          combustível residual.
+        </span>
+      </div>
+      {% elif metricas.tem_dados %}
+      <div class="alert alert-warning py-2 px-3 small mb-3">
+        Registre mais de um abastecimento (ou informe o consumo em Parâmetros)
+        para estimar a autonomia.
+      </div>
+      {% endif %} {% endif %}
+
       <form method="POST" id="abastecimentoForm" novalidate>
         <div class="mb-3">
           <label for="data" class="form-label">Data</label
@@ -189,14 +231,18 @@ endblock %} {% block styles %}
 
           {% if abs.media_consumo_calculada %}
           <div class="period-consumption-highlight">
-            <i class="bi bi-fuel-pump-fill"></i> Média Real do Período:
+            {% if abs.tanque_cheio %}
+            <i class="bi bi-fuel-pump-fill"></i> Média real (tanque cheio):
+            {% else %}
+            <i class="bi bi-fuel-pump"></i> Média estimada do trecho:
+            {% endif %}
             <strong
               >{{ "%.2f"|format(abs.media_consumo_calculada) }} km/L</strong
             >
-          </div>
-          {% endif %} {% if abs.media_desde_anterior %}
-          <div class="stretch-consumption-highlight">
-            Média do Trecho: {{ "%.2f"|format(abs.media_desde_anterior) }} km/L
+            <small class="d-block fw-normal text-muted">
+              Autonomia deste abastecimento: ~{{
+              "%.0f"|format(abs.litros * abs.media_consumo_calculada) }} km
+            </small>
           </div>
           {% endif %}
         </div>
