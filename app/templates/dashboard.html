@@ -206,19 +206,50 @@ content %} {% set months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio',
       <div class="card h-100">
         <div class="card-body text-center">
           <h6 class="card-title text-uppercase text-muted">
-            Custo do Combustível
+            Custos Variáveis por km
           </h6>
           <p class="card-text display-6 fw-bold mb-1">
-            R$ {{ "%.2f"|format(operacional.custo_por_km) }}
+            R$ {{ "%.3f"|format(operacional.custo_variavel_total_por_km) }}
             <small class="fs-5 fw-normal">/km</small>
           </p>
           <small class="d-block text-muted">
-            Preço médio: R$ {{ "%.2f"|format(operacional.preco_recente_litro)
-            }}/L
+            Combustível: R$ {{ "%.3f"|format(operacional.custo_combustivel_por_km)
+            }}/km
           </small>
           <small class="d-block text-muted">
-            Litros no mês: {{ "%.1f"|format(operacional.litros_mes) }} L
+            Manutenção: R$ {{ "%.3f"|format(operacional.custo_manutencao_por_km)
+            }}/km
           </small>
+          <small class="d-block text-muted mt-2">
+            Preço recente: R$ {{ "%.3f"|format(operacional.preco_recente_litro)
+            }}/L • Litros no mês: {{ "%.1f"|format(operacional.litros_mes) }} L
+          </small>
+          <details class="mt-2 text-start">
+            <summary class="small text-muted">Como calculamos</summary>
+            <p class="small text-muted mb-1">
+              <strong>Combustível:</strong> preço do litro ÷ consumo (km/L).
+              Ex.: R$ 6,97 ÷ 10 km/L = R$ 0,697/km.
+            </p>
+            <p class="small text-muted mb-0">
+              <strong>Manutenção:</strong> total gasto (óleo e filtros, pneus,
+              freios, suspensão, bateria, alinhamento/balanceamento e outras
+              manutenções) ÷ km rodados.
+            </p>
+          </details>
+          {% if operacional.historico_custo_km %}
+          <details class="mt-1 text-start">
+            <summary class="small text-muted">Histórico de mudanças</summary>
+            <ul class="list-unstyled small text-muted mb-0">
+              {% for h in operacional.historico_custo_km %}
+              <li>
+                {{ h.data_registro.strftime('%d/%m/%Y') }} —
+                {% if h.tipo == 'combustivel' %}Combustível{% else %}Manutenção{%
+                endif %}: R$ {{ "%.3f"|format(h.valor) }}/km
+              </li>
+              {% endfor %}
+            </ul>
+          </details>
+          {% endif %}
         </div>
       </div>
     </div>
@@ -297,6 +328,9 @@ content %} {% set months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio',
             %}Abaixo do mínimo{% endif %}
           </span>
           <small class="d-block text-muted mt-2">
+            Faturamento do Desempenho do Dia ÷ km rodado no mês
+          </small>
+          <small class="d-block text-muted">
             Meta: R$ {{ "%.2f"|format(operacional.valor_km_meta) }}/km • Mínimo:
             R$ {{ "%.2f"|format(operacional.valor_km_minimo) }}/km
           </small>

@@ -6,7 +6,7 @@ from app.models import (
     User, Parametros, Custo, RegistroCusto,
     CategoriaCusto, CustoVariavel, LancamentoDiario,
     Faturamento, Abastecimento, TipoCombustivel,
-    Receita, RegistroReceita, Invitation
+    Receita, RegistroReceita, Invitation, HistoricoCustoKm
 )
 
 from .forms import LoginForm, BootstrapAdminForm, RegistrationForm, CustoForm, RegistroCustoForm, ReceitaForm, InviteForm
@@ -18,6 +18,7 @@ from functools import wraps
 import secrets
 import locale
 import calendar
+import unicodedata
 
 # Configura o locale para Português do Brasil
 try:
@@ -298,18 +299,12 @@ def index():
             db.session.flush() 
 
         if form_type == 'desempenho':
-            km_atual_str = (request.form.get('kmAtual') or '').strip()
-            if km_atual_str:
-                km_atual = int(float(km_atual_str.replace(',', '.')))
-                km_anterior = _ultimo_km_conhecido(current_user, data_obj, lancamento_diario.id)
-                lancamento_diario.km_atual = km_atual
-                lancamento_diario.km_rodado = (
-                    km_atual - km_anterior
-                    if km_anterior is not None and km_atual >= km_anterior
-                    else 0
-                )
-            else:
-                lancamento_diario.km_rodado = int(request.form.get('kmRodado') or 0)
+            km_rodado_str = (request.form.get('kmRodado') or '').strip()
+            km_rodado = max(int(float(km_rodado_str.replace(',', '.'))), 0) if km_rodado_str else 0
+            lancamento_diario.km_rodado = km_rodado
+            km_anterior = _ultimo_km_conhecido(current_user, data_obj, lancamento_diario.id)
+            if km_anterior is not None:
+                lancamento_diario.km_atual = km_anterior + km_rodado
             # (Sua lógica de faturamento que já funciona, permanece aqui)
             valores = request.form.getlist('faturamentoValor')
             tipos = request.form.getlist('faturamentoTipo')
@@ -404,10 +399,9 @@ def index():
     # --- Lógica para carregar a página (método GET) ---
     categorias = CategoriaCusto.query.order_by(CategoriaCusto.nome).all()
     hoje = date.today().strftime('%Y-%m-%d')
-    ultimo_km = _ultimo_km_conhecido(current_user, date.today())
     return render_template(
         'index.html', parametro=parametro_hoje, categorias=categorias,
-        hoje=hoje, ultimo_km=ultimo_km
+        hoje=hoje
     )
 
 
@@ -490,7 +484,45 @@ def _to_float(value_str):
     except (ValueError, TypeError):
         return 0.0
 
-    
+
+_PALAVRAS_MANUTENCAO = (
+    'oleo', 'filtro', 'pneu', 'freio', 'suspens', 'bateria', 'alinhamento',
+    'balanceamento', 'manutenc', 'revis', 'mecanic', 'motor', 'embreagem',
+    'amortecedor', 'vela', 'correia', 'radiador', 'escapamento', 'injec',
+    'arrefec', 'cambio', 'transmiss', 'peca', 'oficina', 'funilaria', 'pintura',
+)
+
+
+def _normalizar_texto(texto):
+    """Remove acentos e caixa para comparação de nomes de categoria."""
+    normalizado = unicodedata.normalize('NFKD', texto or '')
+    return ''.join(c for c in normalizado if not unicodedata.combining(c)).lower().strip()
+
+
+def _categoria_e_manutencao(nome):
+    normalizado = _normalizar_texto(nome)
+    return any(palavra in normalizado for palavra in _PALAVRAS_MANUTENCAO)
+
+
+def _registrar_historico_custo_km(user_id, tipo, valor, km_base=None, preco_litro=None, consumo=None):
+    """Grava uma linha no histórico apenas quando o valor muda em relação ao último registro."""
+    valor = float(valor or 0.0)
+    if valor <= 0:
+        return None
+
+    ultimo = HistoricoCustoKm.query.filter_by(user_id=user_id, tipo=tipo).order_by(
+        HistoricoCustoKm.id.desc()
+    ).first()
+    if ultimo and abs(float(ultimo.valor or 0.0) - valor) < 0.0005:
+        return ultimo
+
+    novo = HistoricoCustoKm(
+        user_id=user_id, tipo=tipo, valor=valor, km_base=km_base,
+        preco_litro=preco_litro, consumo=consumo
+    )
+    db.session.add(novo)
+    return novo
+
 
 @bp.route("/abastecimento", methods=['GET', 'POST'])
 @login_required
@@ -808,6 +840,33 @@ def dashboard():
 
     metricas_combustivel = _metricas_combustivel(current_user, start_date_month, end_date_month)
 
+    faturamento_desempenho_mes = float(db.session.query(func.sum(Faturamento.valor)).filter(
+        Faturamento.user_id == current_user.id,
+        Faturamento.origem == 'desempenho',
+        Faturamento.data.between(start_date_month, end_date_month)
+    ).scalar() or 0.0)
+
+    categorias_manutencao_ids = [
+        categoria.id for categoria in CategoriaCusto.query.all()
+        if _categoria_e_manutencao(categoria.nome)
+    ]
+    custo_manutencao_total = 0.0
+    if categorias_manutencao_ids:
+        custo_manutencao_total = float(db.session.query(func.sum(CustoVariavel.valor)).filter(
+            CustoVariavel.user_id == current_user.id,
+            CustoVariavel.categoria_id.in_(categorias_manutencao_ids)
+        ).scalar() or 0.0)
+
+    km_total_historico = float(db.session.query(func.sum(LancamentoDiario.km_rodado)).filter(
+        LancamentoDiario.user_id == current_user.id
+    ).scalar() or 0.0)
+
+    custo_combustivel_por_km = float(metricas_combustivel['custo_por_km'])
+    custo_manutencao_por_km = (
+        custo_manutencao_total / km_total_historico
+    ) if km_total_historico > 0 else 0.0
+    custo_variavel_total_por_km = custo_combustivel_por_km + custo_manutencao_por_km
+
     dias_trabalho_semana = int(parametro.dias_trabalho_semana or 0)
     if dias_trabalho_semana > 0:
         dias_uteis_mes = sum(
@@ -858,7 +917,7 @@ def dashboard():
         - float(custos_fixos_total_mes)
     )
 
-    receita_por_km = (faturamento_rides_mes / km_mes) if km_mes > 0 else 0.0
+    receita_por_km = (faturamento_desempenho_mes / km_mes) if km_mes > 0 else 0.0
     custo_variavel_por_km = (
         (float(abastecimentos_mes) + float(custos_variaveis_mes)) / km_mes
     ) if km_mes > 0 else 0.0
@@ -937,9 +996,35 @@ def dashboard():
         'receitas_fixas_total_mes': receitas_fixas_total_mes,
         'custo_combustivel_mes': float(abastecimentos_mes),
         'custo_variavel_mes': float(custos_variaveis_mes),
+        'faturamento_desempenho_mes': faturamento_desempenho_mes,
+        'custo_combustivel_por_km': custo_combustivel_por_km,
+        'custo_manutencao_por_km': custo_manutencao_por_km,
+        'custo_manutencao_total': custo_manutencao_total,
+        'custo_variavel_total_por_km': custo_variavel_total_por_km,
+        'km_total_historico': km_total_historico,
         'mes_em_andamento': mes_em_andamento,
     }
     operacional.update(metricas_combustivel)
+
+    try:
+        _registrar_historico_custo_km(
+            current_user.id, 'combustivel', custo_combustivel_por_km,
+            preco_litro=metricas_combustivel['preco_recente_litro'],
+            consumo=metricas_combustivel['consumo_recente']
+        )
+        _registrar_historico_custo_km(
+            current_user.id, 'manutencao', custo_manutencao_por_km,
+            km_base=km_total_historico
+        )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    historico_custo_km = HistoricoCustoKm.query.filter_by(user_id=current_user.id).order_by(
+        HistoricoCustoKm.id.desc()
+    ).limit(8).all()
+    historico_custo_km.reverse()
+    operacional['historico_custo_km'] = historico_custo_km
 
     # --- 7. EXTRATO DIÁRIO (Lógica de cores revisada) ---
     extrato_diario = current_user.lancamentos_diarios.filter(LancamentoDiario.data.between(start_date_month, end_date_month)).order_by(LancamentoDiario.data.desc()).all()
@@ -1324,9 +1409,9 @@ def _metricas_combustivel(user, start_date=None, end_date=None):
         if trechos:
             metricas['origem_consumo'] = 'parcial'
 
-    consumo_recente = _media_ponderada_segmentos(trechos[-3:])
+    consumo_recente = _media_ponderada_segmentos(segmentos[-3:])
     if consumo_recente <= 0:
-        consumo_recente = _media_ponderada_segmentos(segmentos[-3:])
+        consumo_recente = _media_ponderada_segmentos(trechos[-3:])
     if consumo_recente <= 0:
         consumo_recente = metricas['consumo_geral']
 

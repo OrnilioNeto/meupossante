@@ -35,7 +35,7 @@
             <div class="tab-pane fade show active" id="desempenho" role="tabpanel" aria-labelledby="desempenho-tab">
                 <div class="card card-body bg-light border-top-0 rounded-bottom">
                     <h5 class="card-title mt-2">Registre seu Desempenho</h5>
-                    <p class="card-text">Informe o KM do carro e detalhe as fontes de faturamento do dia.</p>
+                    <p class="card-text">Informe o KM rodado e detalhe as fontes de faturamento do dia.</p>
                     <form method="POST" id="desempenhoForm">
                         <input type="hidden" name="form_type" value="desempenho">
                         
@@ -46,11 +46,10 @@
                                 <input type="date" class="form-control" id="data_desempenho" name="data" value="{{ hoje }}" required>
                             </div>
                             <div class="col-md-6">
-                                <label for="kmAtual" class="form-label">KM do Carro (hodômetro)</label>
-                                <input type="number" class="form-control" id="kmAtual" name="kmAtual" required>
+                                <label for="kmRodado" class="form-label">KM Rodado</label>
+                                <input type="number" class="form-control" id="kmRodado" name="kmRodado" min="0" required>
                                 <div class="form-text">
-                                    KM rodado do dia é calculado com base no último registro.
-                                    {% if ultimo_km %}Último KM conhecido: <strong>{{ ultimo_km }}</strong>.{% endif %}
+                                    Informe quantos quilômetros você rodou neste dia.
                                 </div>
                             </div>
                         </div>

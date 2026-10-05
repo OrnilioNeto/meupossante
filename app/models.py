@@ -144,6 +144,17 @@ class Abastecimento(db.Model):
     tipo_combustivel_id = db.Column(db.Integer, db.ForeignKey('tipo_combustivel.id'), nullable=True)
     media_consumo_calculada = db.Column(db.Float, nullable=True)
 
+class HistoricoCustoKm(db.Model):
+    __tablename__ = 'historico_custo_km'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    tipo = db.Column(db.String(20), nullable=False)
+    valor = db.Column(db.Float, nullable=False, default=0.0)
+    km_base = db.Column(db.Float, nullable=True)
+    preco_litro = db.Column(db.Float, nullable=True)
+    consumo = db.Column(db.Float, nullable=True)
+    data_registro = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
 class Custo(db.Model):
     __tablename__ = 'custo'
     id = db.Column(db.Integer, primary_key=True)
